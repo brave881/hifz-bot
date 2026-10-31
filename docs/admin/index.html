@@ -37,7 +37,10 @@ function memberSheet(m) {
       h("button", { class: "btn", onclick: () => { close(); memberMistakesSheet(m); } }, "⚠️ Xatolar")));
     w.append(h("div", { class: "actions", style: "margin-top:8px" },
       h("button", { class: "btn", onclick: () => { close(); memberReportsSheet(m); } }, "📖 Hisobotlar"),
-      h("button", { class: "btn", onclick: () => { close(); deleteMemberSheet(m); } }, "🗑 O'chirish")));
+      h("button", { class: "btn", onclick: () => { close(); historySheet(m); } }, "📜 Tarix")));
+    w.append(h("div", { class: "actions", style: "margin-top:8px" },
+      m.goal ? h("button", { class: "btn", onclick: () => { close(); confirmSheet("🧹 Haftalik maqsadni tozalash", [m.name + ": " + fmt(m.goal) + " sahifa → yo'q"], async () => { try { await rpc("goal_clear", { id: m.id }); toast("🧹 Tozalandi"); await reload(); } catch (e) { toast(errTxt(e)); } }); } }, "🧹 Maqsadni tozalash") : null,
+      h("button", { class: "btn", onclick: () => { close(); deleteMemberSheet(m); } }, "🗑 A'zoni o'chirish")));
     return w;
   });
 }

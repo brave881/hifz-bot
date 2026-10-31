@@ -293,16 +293,76 @@ function addMemberSheet() {
       } }, "Qo'shish"));
   });
 }
+const REP_ST = { approved: "✅ Tasdiqlangan", pending: "⏳ Kutilmoqda", repeat: "🔁 Qayta" };
+const ERR_UZ = { bad_pages: "Sahifa 0 dan katta va 100 dan oshmasin", bad_day: "Sana noto'g'ri (kelajak yoki juda eski)", changed: "Shundan keyin yana o'zgartirilgan, avval keyingisini qaytaring", not_found: "Topilmadi", nothing: "O'zgarish yo'q" };
+const errTxt = e => ERR_UZ[e.message] || ("Xato: " + e.message);
 async function memberReportsSheet(m) {
   try {
     const d = await rpc("report_list", { id: m.id });
     openSheet("📖 " + m.name + ": hisobotlar", close => {
-      const w = h("div", {}, h("div", { class: "meta" }, "Noto'g'ri kiritilganni o'chiring (Savatdan tiklash mumkin)."));
+      const w = h("div", {}, h("div", { class: "meta" }, "Tuzatish uchun hisobotni bosing. Hamma o'zgarish «Tarix»da saqlanadi va qaytariladi."),
+        h("button", { class: "btn primary wide", onclick: () => { close(); addReportSheet(m); } }, "➕ Hisobot qo'shish"),
+        h("button", { class: "btn wide", onclick: () => { close(); historySheet(m); } }, "📜 Tarix"));
       if (!d.items.length) w.append(h("div", { class: "msg" }, "Hisobot yo'q."));
-      const ic = { approved: "✅", pending: "⏳", repeat: "🔁" };
-      d.items.forEach(r => w.append(h("div", { class: "card" }, h("div", { class: "row" },
-        h("span", {}, (ic[r.status] || "") + " " + fmt(r.pages) + " sahifa · " + r.day),
-        h("button", { class: "btn", onclick: async () => { try { await rpc("report_delete", { id: r.id }); toast("🗑 Savatga o'tdi"); close(); reload(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑")))));
+      d.items.forEach(r => w.append(h("div", { class: "card tap", onclick: () => { close(); editReportSheet(m, r); } }, h("div", { class: "row" },
+        h("span", {}, fmt(r.pages) + " sahifa · " + r.day), h("span", { class: "meta" }, REP_ST[r.status] || r.status)))));
+      return w;
+    });
+  } catch (e) { toast("Xato: " + e.message); }
+}
+function confirmSheet(title, lines, onYes) {
+  openSheet(title, close => h("div", {}, h("div", { class: "card" }, lines.map(l => h("div", { class: "row" }, l))),
+    h("button", { class: "btn primary wide", onclick: async () => { close(); await onYes(); } }, "✅ Ha, tasdiqlayman"),
+    h("button", { class: "btn wide", onclick: close }, "Bekor")));
+}
+function editReportSheet(m, r) {
+  openSheet("✏️ Hisobotni tuzatish", close => {
+    const pg = h("input", { type: "number", inputmode: "decimal", step: "0.5", min: "0", max: "100", value: String(r.pages) });
+    const dy = h("input", { type: "date", value: r.day, max: new Date().toISOString().slice(0, 10) });
+    const st = h("select", {}, Object.entries(REP_ST).map(([k, v]) => h("option", Object.assign({ value: k }, k === r.status ? { selected: "selected" } : {}), v)));
+    return h("div", {}, h("div", { class: "meta" }, m.name), h("div", { class: "sec" }, "Sahifa"), h("div", { class: "custom" }, pg),
+      h("div", { class: "sec" }, "Sana"), h("div", { class: "custom" }, dy), h("div", { class: "sec" }, "Holat"), h("div", { class: "custom" }, st),
+      h("button", { class: "btn primary wide", onclick: () => {
+        const np = Math.round(parseFloat(String(pg.value).replace(",", ".")) * 100) / 100;
+        if (!(np > 0 && np <= 100)) return toast("Sahifa 0 dan katta va 100 dan oshmasin");
+        const patch = {}; const lines = [];
+        if (np !== r.pages) { patch.pages = np; lines.push("Sahifa: " + fmt(r.pages) + " → " + fmt(np)); }
+        if (dy.value !== r.day) { patch.day = dy.value; lines.push("Sana: " + r.day + " → " + dy.value); }
+        if (st.value !== r.status) { patch.status = st.value; lines.push("Holat: " + REP_ST[r.status] + " → " + REP_ST[st.value]); }
+        if (!lines.length) return toast("O'zgarish yo'q");
+        close();
+        confirmSheet("Tasdiqlang", [...lines, "A'zoga xabar yuboriladi."], async () => {
+          try { await rpc("report_edit", { id: r.id, ...patch }); toast("✅ Tuzatildi"); await reload(); } catch (e) { toast(errTxt(e)); }
+        });
+      } }, "Saqlash"),
+      h("button", { class: "btn wide", onclick: async () => { try { await rpc("report_delete", { id: r.id }); close(); toast("🗑 Savatga o'tdi"); reload(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑 O'chirish"));
+  });
+}
+function addReportSheet(m) {
+  openSheet("➕ Hisobot qo'shish", close => {
+    const pg = h("input", { type: "number", inputmode: "decimal", step: "0.5", min: "0", max: "100", placeholder: "Sahifa" });
+    const today = new Date(Date.now() + 5 * 3600e3).toISOString().slice(0, 10);
+    const dy = h("input", { type: "date", value: today, max: today });
+    return h("div", {}, h("div", { class: "meta" }, m.name + ": tasdiqlangan holda qo'shiladi."), h("div", { class: "custom", style: "margin-top:8px" }, pg), h("div", { class: "custom", style: "margin-top:8px" }, dy),
+      h("button", { class: "btn primary wide", onclick: () => {
+        const np = Math.round(parseFloat(String(pg.value).replace(",", ".")) * 100) / 100;
+        if (!(np > 0 && np <= 100)) return toast("Sahifa 0 dan katta va 100 dan oshmasin");
+        close();
+        confirmSheet("Tasdiqlang", ["+ " + fmt(np) + " sahifa", "Sana: " + dy.value], async () => {
+          try { await rpc("report_add", { id: m.id, pages: np, day: dy.value }); toast("✅ Qo'shildi"); await reload(); } catch (e) { toast(errTxt(e)); }
+        });
+      } }, "Qo'shish"));
+  });
+}
+async function historySheet(m) {
+  try {
+    const d = await rpc("audit_list", { id: m.id });
+    openSheet("📜 " + m.name + ": tarix", close => {
+      const w = h("div", {}, h("div", { class: "meta" }, "Statistikadagi o'zgarishlar. Qaytarish faqat shundan keyin o'zgartirilmagan bo'lsa ishlaydi."));
+      if (!d.items.length) w.append(h("div", { class: "msg" }, "Tarix bo'sh."));
+      d.items.forEach(x => w.append(h("div", { class: "card" }, h("div", { class: "row" }, h("b", {}, x.action), h("span", { class: "meta" }, x.at)),
+        h("div", { class: "meta" }, x.desc + (x.undone ? " · qaytarilgan" : "")),
+        x.undone ? null : h("button", { class: "btn wide", onclick: async () => { try { await rpc("audit_undo", { id: x.id }); close(); toast("↩️ Qaytarildi"); await reload(); } catch (e) { toast(errTxt(e)); } } }, "↩️ Qaytarish"))));
       return w;
     });
   } catch (e) { toast("Xato: " + e.message); }

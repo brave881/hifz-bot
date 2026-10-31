@@ -398,7 +398,10 @@ async function setGoal(adminUid: number, memberId: number, pages: number, quiet 
   if (!circ) return;
   const { data: m } = await sb.from("members").select("*").eq("tg_id", memberId).eq("circle_id", circ.id).maybeSingle();
   if (!m) return send(adminUid, "A'zo topilmadi.");
-  await sb.from("goals").upsert({ tg_id: memberId, week_start: weekStart(), pages }, { onConflict: "tg_id,week_start" });
+  const gkey = { tg_id: memberId, week_start: weekStart() };
+  const { data: oldGoal } = await sb.from("goals").select("*").match(gkey).maybeSingle();
+  const { data: newGoal } = await sb.from("goals").upsert({ ...gkey, pages }, { onConflict: "tg_id,week_start" }).select().single();
+  await auditWrite(circ.id, adminUid, memberId, "goal_set", "goals", gkey, oldGoal, newGoal);
   const mem = await memberOf(adminUid);
   if (!quiet) await send(adminUid, `✅ <b>${esc(m.name)}</b> uchun bu hafta: <b>${fmt(pages)}</b> sahifa`, menuKb(true, !!mem));
   if (memberId !== adminUid) {
@@ -457,7 +460,9 @@ async function memberInCircle(adminUid: number, memberId: number) {
 async function setYear(adminUid: number, memberId: number, juz: number, quiet = false) {
   const m = await memberInCircle(adminUid, memberId);
   if (!m) return send(adminUid, "A'zo topilmadi.");
-  await sb.from("plans").upsert({ tg_id: memberId, juz, start_date: weekStart(), weeks: 52 }, { onConflict: "tg_id" });
+  const { data: oldPlan } = await sb.from("plans").select("*").eq("tg_id", memberId).maybeSingle();
+  const { data: newPlan } = await sb.from("plans").upsert({ tg_id: memberId, juz, start_date: weekStart(), weeks: 52 }, { onConflict: "tg_id" }).select().single();
+  await auditWrite(m.circle_id, adminUid, memberId, "year_plan", "plans", { tg_id: memberId }, oldPlan, newPlan);
   const lt = await longTerm(memberId);
   if (memberId !== adminUid) {
     await send(memberId,
@@ -550,6 +555,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "new") return showMenu(uid, name);
 
+  if (await actEditPlus(a, uid)) return;
   if (await actAdminPlus(a, uid, name, mid)) return;
   if (await actPlus(a, uid, name, mid)) return;
 
@@ -622,7 +628,8 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       [{ text: "🗓 Oylik reja", callback_data: `mp:${id}` }],
       [{ text: "🎯 Haftalik", callback_data: `aw:${id}` }, { text: "📆 Yillik", callback_data: `ay:${id}` }],
       [{ text: "🗺 Reja", callback_data: `ap:${id}` }, { text: "⚠️ Xatolar", callback_data: `xa:${id}` }],
-      [{ text: "📖 Hisobotlar", callback_data: `rl:${id}` }, { text: "🗑 A'zoni o'chirish", callback_data: `mdc:${id}` }],
+      [{ text: "📖 Hisobotlar", callback_data: `rl:${id}` }, { text: "📜 Tarix", callback_data: `hl:${id}` }],
+      [{ text: "🗑 A'zoni o'chirish", callback_data: `mdc:${id}` }],
       [{ text: "⬅️ Orqaga", callback_data: "al" }],
     ];
     return send(uid,
@@ -631,7 +638,9 @@ async function act(a: string, uid: number, name: string, mid?: number) {
   }
   if (a.startsWith("aw:")) {
     const id = Number(a.slice(3));
-    return send(uid, "🎯 Bu hafta necha sahifa?", numKb(`sg:${id}`, `as:${id}`));
+    const kbw = numKb(`sg:${id}`, `as:${id}`);
+    kbw.inline_keyboard.splice(kbw.inline_keyboard.length - 1, 0, [{ text: "🧹 Maqsadni tozalash", callback_data: `gc:${id}` }]);
+    return send(uid, "🎯 Bu hafta necha sahifa?", kbw);
   }
   if (a.startsWith("ss:")) {
     const [, id, v] = a.split(":");
@@ -759,7 +768,10 @@ async function setMonthPlan(adminUid: number, memberId: number, pages: number, s
   const m = await memberInCircle(adminUid, memberId);
   if (!m) return send(adminUid, "A'zo topilmadi.");
   const key = day().slice(0, 7);
-  await sb.from("month_plans").upsert({ tg_id: memberId, month: key, pages, start_ayah: startId, dir: dir === -1 ? -1 : 1, from_date: day(), set_by: adminUid });
+  const mkey = { tg_id: memberId, month: key };
+  const { data: oldMp } = await sb.from("month_plans").select("*").match(mkey).maybeSingle();
+  const { data: newMp } = await sb.from("month_plans").upsert({ ...mkey, pages, start_ayah: startId, dir: dir === -1 ? -1 : 1, from_date: day(), set_by: adminUid }).select().single();
+  await auditWrite(m.circle_id, adminUid, memberId, "month_plan", "month_plans", mkey, oldMp, newMp);
   await sb.from("month_goals").upsert({ tg_id: memberId, month: key, pages }, { onConflict: "tg_id,month" });
   const dates = planDates(day());
   const ws = weekStart();
@@ -1602,10 +1614,11 @@ async function actAdminPlus(a: string, uid: number, name: string, mid?: number):
   if (a.startsWith("rl:")) {
     const id = Number(a.slice(3));
     const { data: rs } = await sb.from("reports").select("*").eq("tg_id", id).eq("circle_id", circ.id).order("created_at", { ascending: false }).limit(12);
-    if (!rs?.length) { await send(uid, "Hisobot yo'q.", { inline_keyboard: [[{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] }); return true; }
+    if (!rs?.length) { await send(uid, "Hisobot yo'q.", { inline_keyboard: [[{ text: "➕ Hisobot qo'shish", callback_data: `ra:${id}` }], [{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] }); return true; }
     const ic = (st: string) => (st === "approved" ? "✅" : st === "pending" ? "⏳" : "🔁");
-    await send(uid, "📖 <b>Hisobotlar</b>\nNoto'g'risini o'chiring 👇", { inline_keyboard: [
-      ...rs.map((r) => [{ text: `🗑 ${ic(r.status)} ${fmt(Number(r.pages))} sahifa · ${r.day}`, callback_data: `rx:${r.id}:${id}` }]),
+    await send(uid, "📖 <b>Hisobotlar</b>\nTuzatish yoki o'chirish uchun bosing 👇", { inline_keyboard: [
+      [{ text: "➕ Hisobot qo'shish", callback_data: `ra:${id}` }],
+      ...rs.map((r) => [{ text: `${ic(r.status)} ${fmt(Number(r.pages))} sahifa · ${r.day}`, callback_data: `rv:${r.id}:${id}` }]),
       [{ text: "⬅️ Orqaga", callback_data: `as:${id}` }],
     ] });
     return true;
@@ -1639,6 +1652,201 @@ async function actAdminPlus(a: string, uid: number, name: string, mid?: number):
   return false;
 }
 
+// ---------- v13: statistikani tuzatish (audit + qaytarish) ----------
+const weekStartOf = (d: string) => addDays(d, -((new Date(d + "T00:00:00Z").getUTCDay() + 6) % 7));
+const ACTION_NAME: Record<string, string> = {
+  report_edit: "Hisobot tuzatildi", report_add: "Hisobot qo'shildi", goal_set: "Haftalik maqsad",
+  goal_clear: "Maqsad tozalandi", month_plan: "Oylik reja", year_plan: "Yillik reja",
+};
+const STATUS_NAME: Record<string, string> = { approved: "✅ tasdiqlangan", pending: "⏳ kutilmoqda", repeat: "🔁 qayta" };
+
+async function auditWrite(circId: number, actor: number, memberId: number | null, action: string, tbl: string,
+  key: Record<string, unknown>, oldRow: unknown, newRow: unknown) {
+  await sb.from("audit").insert({ circle_id: circId, actor, member_id: memberId, action, tbl, row_key: key, old_row: oldRow ?? null, new_row: newRow ?? null });
+}
+function describeAudit(a: any): string {
+  const o = a.old_row, n = a.new_row;
+  if (a.action === "report_edit" && o && n) {
+    const parts: string[] = [];
+    if (Number(o.pages) !== Number(n.pages)) parts.push(`${fmt(Number(o.pages))} → ${fmt(Number(n.pages))} sahifa`);
+    if (o.status !== n.status) parts.push(`${STATUS_NAME[o.status] ?? o.status} → ${STATUS_NAME[n.status] ?? n.status}`);
+    if (o.day !== n.day) parts.push(`${o.day} → ${n.day}`);
+    return parts.join(", ") || "o'zgarish";
+  }
+  if (a.action === "report_add" && n) return `${fmt(Number(n.pages))} sahifa, ${n.day}`;
+  if (a.action === "goal_set" || a.action === "goal_clear") return `${o ? fmt(Number(o.pages)) : "yo'q"} → ${n ? fmt(Number(n.pages)) : "yo'q"} sahifa`;
+  if (a.action === "month_plan") return `${o ? fmt(Number(o.pages)) : "yo'q"} → ${n ? fmt(Number(n.pages)) : "yo'q"} sahifa`;
+  if (a.action === "year_plan") return `${o ? fmt(Number(o.juz)) : "yo'q"} → ${n ? fmt(Number(n.juz)) : "yo'q"} juz`;
+  return "";
+}
+
+async function validateReportPatch(p: { pages?: number; day?: string; status?: string }): Promise<string | null> {
+  if (p.pages !== undefined && !(p.pages > 0 && p.pages <= 100)) return "bad_pages";
+  if (p.day !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(p.day) || p.day > day() || p.day < addDays(day(), -400))) return "bad_day";
+  if (p.status !== undefined && !STATUS_NAME[p.status]) return "bad_status";
+  return null;
+}
+
+async function editReport(adminUid: number, rid: number, patch: { pages?: number; day?: string; status?: string }) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return { ok: false as const, err: "forbidden" };
+  const bad = await validateReportPatch(patch);
+  if (bad) return { ok: false as const, err: bad };
+  const { data: old } = await sb.from("reports").select("*").eq("id", rid).eq("circle_id", circ.id).maybeSingle();
+  if (!old) return { ok: false as const, err: "not_found" };
+  const upd: Record<string, unknown> = {};
+  if (patch.pages !== undefined) upd.pages = patch.pages;
+  if (patch.day !== undefined) { upd.day = patch.day; upd.week_start = weekStartOf(patch.day); }
+  if (patch.status !== undefined) { upd.status = patch.status; upd.decided_at = patch.status === "pending" ? null : new Date().toISOString(); }
+  if (!Object.keys(upd).length) return { ok: false as const, err: "nothing" };
+  const { data: nw } = await sb.from("reports").update(upd).eq("id", rid).select().single();
+  await auditWrite(circ.id, adminUid, old.tg_id, "report_edit", "reports", { id: rid }, old, nw);
+  const d = describeAudit({ action: "report_edit", old_row: old, new_row: nw });
+  if (old.tg_id !== adminUid) send(old.tg_id, `📝 Yo'naltiruvchi hisobotingizni tuzatdi: ${d}`).catch(() => {});
+  return { ok: true as const, desc: d };
+}
+
+async function addReportManual(adminUid: number, memberId: number, pages: number, dayStr: string) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return { ok: false as const, err: "forbidden" };
+  const bad = await validateReportPatch({ pages, day: dayStr });
+  if (bad) return { ok: false as const, err: bad };
+  if (!(await memberInCircle(adminUid, memberId))) return { ok: false as const, err: "not_found" };
+  const { data: nw } = await sb.from("reports").insert({
+    tg_id: memberId, circle_id: circ.id, week_start: weekStartOf(dayStr), day: dayStr, pages, status: "approved", decided_at: new Date().toISOString(),
+  }).select().single();
+  await auditWrite(circ.id, adminUid, memberId, "report_add", "reports", { id: nw.id }, null, nw);
+  if (memberId !== adminUid) send(memberId, `📝 Yo'naltiruvchi sizga hisobot qo'shdi: ${fmt(pages)} sahifa, ${dayStr}`).catch(() => {});
+  return { ok: true as const };
+}
+
+async function clearGoal(adminUid: number, memberId: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ || !(await memberInCircle(adminUid, memberId))) return false;
+  const key = { tg_id: memberId, week_start: weekStart() };
+  const { data: old } = await sb.from("goals").select("*").match(key).maybeSingle();
+  if (!old) return false;
+  await sb.from("goals").delete().match(key);
+  await auditWrite(circ.id, adminUid, memberId, "goal_clear", "goals", key, old, null);
+  return true;
+}
+
+async function auditList(circId: number, memberId: number) {
+  const { data } = await sb.from("audit").select("*").eq("circle_id", circId).eq("member_id", memberId)
+    .order("created_at", { ascending: false }).limit(15);
+  return (data ?? []).map((a: any) => ({ id: a.id, action: ACTION_NAME[a.action] ?? a.action, desc: describeAudit(a), at: String(a.created_at).slice(0, 16).replace("T", " "), undone: !!a.undone_at }));
+}
+
+// qaytarish: faqat qator hali yozuvdan keyin o'zgarmagan bo'lsa (xavfsizlik)
+async function auditUndo(adminUid: number, aid: number): Promise<"ok" | "changed" | "missing"> {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return "missing";
+  const { data: a } = await sb.from("audit").select("*").eq("id", aid).eq("circle_id", circ.id).is("undone_at", null).maybeSingle();
+  if (!a) return "missing";
+  const { data: cur } = await sb.from(a.tbl).select("*").match(a.row_key).maybeSingle();
+  if (JSON.stringify(cur ?? null) !== JSON.stringify(a.new_row ?? null)) return "changed";
+  if (a.old_row) await sb.from(a.tbl).upsert(a.old_row);
+  else await sb.from(a.tbl).delete().match(a.row_key);
+  await sb.from("audit").update({ undone_at: new Date().toISOString() }).eq("id", aid);
+  return "ok";
+}
+const AUDIT_ERR: Record<string, string> = { bad_pages: "Sahifa 0 dan katta va 100 dan oshmasin.", bad_day: "Sana noto'g'ri (kelajak yoki juda eski).", bad_status: "Holat noto'g'ri.", not_found: "Topilmadi.", nothing: "O'zgarish yo'q.", forbidden: "Ruxsat yo'q." };
+
+async function actEditPlus(a: string, uid: number): Promise<boolean> {
+  const circ = await circleOfAdmin(uid);
+  if (!circ) return false;
+  const setS = (state: string, data: unknown = {}) => sb.from("sessions").upsert({ tg_id: uid, state, data });
+  const back = (id: string | number) => ({ inline_keyboard: [[{ text: "📖 Hisobotlar", callback_data: `rl:${id}` }, { text: "⬅️ A'zo", callback_data: `as:${id}` }]] });
+
+  if (a.startsWith("rv:")) {
+    const [, rid, id] = a.split(":");
+    const { data: r } = await sb.from("reports").select("*").eq("id", Number(rid)).eq("circle_id", circ.id).maybeSingle();
+    if (!r) { await send(uid, "Topilmadi."); return true; }
+    await send(uid, `📖 <b>Hisobot</b>\n${fmt(Number(r.pages))} sahifa · ${r.day}\nHolat: ${STATUS_NAME[r.status] ?? r.status}`, { inline_keyboard: [
+      [{ text: "✏️ Sahifani o'zgartirish", callback_data: `re:${rid}:${id}` }],
+      [{ text: "✅", callback_data: `rs:${rid}:approved:${id}` }, { text: "⏳", callback_data: `rs:${rid}:pending:${id}` }, { text: "🔁", callback_data: `rs:${rid}:repeat:${id}` }],
+      [{ text: "🗑 O'chirish", callback_data: `rx:${rid}:${id}` }],
+      [{ text: "⬅️ Orqaga", callback_data: `rl:${id}` }],
+    ] });
+    return true;
+  }
+  if (a.startsWith("re:")) {
+    const [, rid, id] = a.split(":");
+    await send(uid, "✏️ To'g'ri sahifa soni?", numKb(`rn:${rid}:${id}`, `rv:${rid}:${id}`, [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12]));
+    return true;
+  }
+  if (a.startsWith("rn:")) {
+    const [, rid, id, v] = a.split(":");
+    if (v === "x") { await setS("rnx", { rid: Number(rid), id: Number(id) }); await send(uid, "Sahifa sonini yozing. Masalan: <code>2.5</code>"); return true; }
+    return confirmReportPages(uid, Number(rid), Number(id), Number(v));
+  }
+  if (a.startsWith("rc:")) {
+    const [, rid, id, v] = a.split(":");
+    const r = await editReport(uid, Number(rid), { pages: Number(v) });
+    await send(uid, r.ok ? `✅ Tuzatildi: ${r.desc}\nA'zoga xabar yuborildi. Xato bo'lsa, «📜 Tarix» dan qaytarasiz.` : `❌ ${AUDIT_ERR[r.err] ?? r.err}`, back(id));
+    return true;
+  }
+  if (a.startsWith("rs:")) {
+    const [, rid, st, id] = a.split(":");
+    const r = await editReport(uid, Number(rid), { status: st });
+    await send(uid, r.ok ? `✅ Holat o'zgardi: ${r.desc}\n(Mukofot xabari yuborilmaydi; qaytarish: «📜 Tarix»)` : `❌ ${AUDIT_ERR[r.err] ?? r.err}`, back(id));
+    return true;
+  }
+  if (a.startsWith("ra:")) {
+    const id = a.slice(3);
+    await send(uid, "➕ Qo'lda hisobot: necha sahifa? (bugungi sana bilan tasdiqlangan holda qo'shiladi)", numKb(`rm:${id}`, `rl:${id}`, [0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8]));
+    return true;
+  }
+  if (a.startsWith("rm:")) {
+    const [, id, v] = a.split(":");
+    if (v === "x") { await setS("rmx", { id: Number(id) }); await send(uid, "Sahifa sonini yozing. Masalan: <code>2.5</code>"); return true; }
+    return confirmReportAdd(uid, Number(id), Number(v));
+  }
+  if (a.startsWith("rk:")) {
+    const [, id, v] = a.split(":");
+    const r = await addReportManual(uid, Number(id), Number(v), day());
+    await send(uid, r.ok ? `✅ Qo'shildi: ${fmt(Number(v))} sahifa. Xato bo'lsa, «📜 Tarix» dan qaytarasiz.` : `❌ ${AUDIT_ERR[r.err] ?? r.err}`, back(id));
+    return true;
+  }
+  if (a.startsWith("hl:")) {
+    const id = Number(a.slice(3));
+    const items = await auditList(circ.id, id);
+    if (!items.length) { await send(uid, "📜 Tarix bo'sh.", { inline_keyboard: [[{ text: "⬅️ A'zo", callback_data: `as:${id}` }]] }); return true; }
+    await send(uid, "📜 <b>O'zgarishlar tarixi</b>\n\n" + items.map((x, i) => `${i + 1}. ${x.at} — ${x.action}: ${esc(x.desc)}${x.undone ? " (qaytarilgan)" : ""}`).join("\n") + "\n\nQaytarish uchun raqamni bosing 👇", { inline_keyboard: [
+      ...chunk(items.map((x, i) => ({ text: `↩️ ${i + 1}`, callback_data: `hu:${x.id}:${id}` })).filter((_, i) => !items[i].undone), 5),
+      [{ text: "⬅️ A'zo", callback_data: `as:${id}` }],
+    ] });
+    return true;
+  }
+  if (a.startsWith("hu:")) {
+    const [, aid, id] = a.split(":");
+    const r = await auditUndo(uid, Number(aid));
+    await send(uid, r === "ok" ? "↩️ Qaytarildi." : r === "changed" ? "Qaytarib bo'lmadi: shundan keyin yana o'zgartirilgan. Avval keyingisini qaytaring." : "Topilmadi yoki allaqachon qaytarilgan.",
+      { inline_keyboard: [[{ text: "📜 Tarix", callback_data: `hl:${id}` }, { text: "⬅️ A'zo", callback_data: `as:${id}` }]] });
+    return true;
+  }
+  if (a.startsWith("gc:")) {
+    const id = Number(a.slice(3));
+    const ok = await clearGoal(uid, id);
+    await send(uid, ok ? "🧹 Bu haftaning maqsadi tozalandi. Xato bo'lsa, «📜 Tarix» dan qaytarasiz." : "Bu hafta maqsad yo'q edi.", { inline_keyboard: [[{ text: "⬅️ A'zo", callback_data: `as:${id}` }]] });
+    return true;
+  }
+  return false;
+}
+async function confirmReportPages(uid: number, rid: number, id: number, v: number) {
+  if (!(v > 0 && v <= 100)) return send(uid, "Sahifa 0 dan katta va 100 dan oshmasin.");
+  const { data: r } = await sb.from("reports").select("pages,day").eq("id", rid).maybeSingle();
+  return send(uid, `✏️ Tasdiqlang:\n${fmt(Number(r?.pages ?? 0))} → <b>${fmt(v)}</b> sahifa (${r?.day ?? ""})`, { inline_keyboard: [[
+    { text: "✅ Ha, o'zgartirish", callback_data: `rc:${rid}:${id}:${v}` }, { text: "Bekor", callback_data: `rv:${rid}:${id}` },
+  ]] });
+}
+async function confirmReportAdd(uid: number, id: number, v: number) {
+  if (!(v > 0 && v <= 100)) return send(uid, "Sahifa 0 dan katta va 100 dan oshmasin.");
+  return send(uid, `➕ Tasdiqlang: <b>${fmt(v)}</b> sahifa, ${day()}, tasdiqlangan holda qo'shiladi.`, { inline_keyboard: [[
+    { text: "✅ Ha, qo'shish", callback_data: `rk:${id}:${v}` }, { text: "Bekor", callback_data: `rl:${id}` },
+  ]] });
+}
+
 // ---------- kiruvchi xabarlar ----------
 async function handleText(uid: number, name: string, t: string) {
   const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).maybeSingle();
@@ -1651,6 +1859,12 @@ async function handleText(uid: number, name: string, t: string) {
     await send(uid, r.ok ? `✅ ${r.existed ? "Yangilandi" : "Qo'shildi"}: <b>${esc(r.name)}</b>${p.phone ? " · " + esc(p.phone) : ""}\n🆔 <code>${p.id}</code>\n\nA'zo botni ochib /start bossin.`
       : r.err === "other_circle" ? "Bu ID boshqa halqada." : "ID noto'g'ri.", { inline_keyboard: [[{ text: "➕ Yana qo'shish", callback_data: "ma" }, { text: "👥 A'zolar", callback_data: "al" }]] });
     return;
+  }
+  if (s.state === "rnx" || s.state === "rmx") {
+    const v = Math.round(parseFloat(t.replace(",", ".")) * 100) / 100;
+    if (!(v > 0 && v <= 100)) { await send(uid, "Son yozing. Masalan: <code>2.5</code>"); return; }
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    return s.state === "rnx" ? confirmReportPages(uid, s.data.rid, s.data.id, v) : confirmReportAdd(uid, s.data.id, v);
   }
   if (s.state === "msg") {
     await sb.from("sessions").delete().eq("tg_id", uid);
@@ -2061,6 +2275,35 @@ async function rpc(req: Request) {
       if (!(await memberInCircle(uid, id))) return forbid();
       const { data } = await sb.from("reports").select("id,pages,day,status").eq("tg_id", id).order("created_at", { ascending: false }).limit(30);
       return json({ items: (data ?? []).map((r) => ({ id: r.id, pages: Number(r.pages), day: r.day, status: r.status })) });
+    }
+    case "report_edit": {
+      if (!admin) return forbid();
+      const patch: { pages?: number; day?: string; status?: string } = {};
+      if (body.pages !== undefined) patch.pages = Math.round(Number(body.pages) * 100) / 100;
+      if (body.day !== undefined) patch.day = String(body.day);
+      if (body.status !== undefined) patch.status = String(body.status);
+      const r = await editReport(uid, Number(body.id), patch);
+      return r.ok ? json({ ok: true, desc: r.desc }) : json({ error: r.err }, 400);
+    }
+    case "report_add": {
+      if (!admin) return forbid();
+      const r = await addReportManual(uid, Number(body.id), Math.round(Number(body.pages) * 100) / 100, String(body.day ?? day()));
+      return r.ok ? ok() : json({ error: r.err }, 400);
+    }
+    case "goal_clear": {
+      if (!admin) return forbid();
+      return (await clearGoal(uid, Number(body.id))) ? ok() : json({ error: "no_goal" }, 400);
+    }
+    case "audit_list": {
+      if (!admin) return forbid();
+      const id = Number(body.id);
+      if (!(await memberInCircle(uid, id))) return forbid();
+      return json({ items: await auditList(circId, id) });
+    }
+    case "audit_undo": {
+      if (!admin) return forbid();
+      const r = await auditUndo(uid, Number(body.id));
+      return r === "ok" ? ok() : json({ error: r }, 400);
     }
     case "report_delete":
       if (!admin) return forbid();
