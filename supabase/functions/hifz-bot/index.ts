@@ -95,8 +95,28 @@ async function ensureCommands() {
 }
 
 // ---------- ma'lumotlar ----------
-const circleOfAdmin = async (uid: number) =>
-  (await sb.from("circles").select("*").eq("admin_id", uid).maybeSingle()).data;
+// Yagona yo'naltiruvchi: Supabase → Edge Functions → Secrets → ADMIN_ID (Telegram ID)
+const ADMIN_ID = Number(Deno.env.get("ADMIN_ID") ?? "0");
+
+async function circleOfAdmin(uid: number) {
+  if (ADMIN_ID && uid !== ADMIN_ID) return null;
+  return (await sb.from("circles").select("*").eq("admin_id", uid).maybeSingle()).data;
+}
+
+// ADMIN_ID egasi botni ochganda halqa o'zi yaratiladi (yoki eski halqa unga o'tadi)
+async function adminCircle(uid: number, name: string) {
+  const c = await circleOfAdmin(uid);
+  if (c || !ADMIN_ID || uid !== ADMIN_ID) return c;
+  const { data: any1 } = await sb.from("circles").select("*").limit(1).maybeSingle();
+  if (any1) {
+    const { data } = await sb.from("circles").update({ admin_id: uid, admin_name: name }).eq("id", any1.id).select().single();
+    return data;
+  }
+  const { data } = await sb.from("circles")
+    .insert({ admin_id: uid, admin_name: name, join_code: rndCode(), view_code: rndCode() })
+    .select().single();
+  return data;
+}
 const circleById = async (id: number) =>
   (await sb.from("circles").select("*").eq("id", id).maybeSingle()).data;
 const memberOf = async (uid: number) =>
@@ -237,14 +257,13 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
 }
 
 async function showMenu(uid: number, name: string, pre?: string) {
-  const circ = await circleOfAdmin(uid);
+  const circ = await adminCircle(uid, name);
   const mem = await memberOf(uid);
   if (!circ && !mem) {
-    const { count } = await sb.from("circles").select("*", { count: "exact", head: true });
-    if ((count ?? 0) === 0) {
+    if (!ADMIN_ID) {
       return send(uid,
-        `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\nHali halqa yaratilmagan. Siz yo'naltiruvchi bo'lsangiz, halqani shu yerdan yarating 👇`,
-        { inline_keyboard: [[{ text: "🆕 Halqa yaratish", callback_data: "new" }]] });
+        `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\nYo'naltiruvchi (admin) hali belgilanmagan.\n` +
+        `Sizning Telegram ID: <code>${uid}</code>\nAdmin siz bo'lsangiz, shu raqamni Supabase → Edge Functions → Secrets ichiga <code>ADMIN_ID</code> nomi bilan yozing.`);
     }
     return send(uid,
       `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\nHalqaga qo'shilish uchun yo'naltiruvchidan taklif havolasini so'rang.`);
@@ -465,7 +484,7 @@ const rankKb = (scope: string) => ({
 });
 
 async function act(a: string, uid: number, name: string, mid?: number) {
-  const circ = await circleOfAdmin(uid);
+  const circ = await adminCircle(uid, name);
   const mem = await memberOf(uid);
   const isAdmin = !!circ, isMem = !!mem;
   const ws = weekStart();
@@ -476,14 +495,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     return showMenu(uid, name);
   }
 
-  if (a === "new") {
-    const { count } = await sb.from("circles").select("*", { count: "exact", head: true });
-    if ((count ?? 0) > 0) return showMenu(uid, name);
-    await sb.from("circles").insert({
-      admin_id: uid, admin_name: name, join_code: rndCode(), view_code: rndCode(),
-    });
-    return act("inv", uid, name);
-  }
+  if (a === "new") return showMenu(uid, name);
 
   if (a === "inv") {
     if (!circ) return;
@@ -703,6 +715,9 @@ async function handleMessage(msg: any) {
   const name = msg.from.first_name ?? "Do'st";
   const t: string = msg.text.trim();
 
+  if (t === "/id" || t.startsWith("/id@")) {
+    return send(uid, `🆔 Sizning Telegram ID: <code>${uid}</code>`);
+  }
   if (t.startsWith("/start")) {
     const payload = t.split(/\s+/)[1] ?? "";
     if (payload.startsWith("j_")) return joinByCode(payload.slice(2), uid, name);
