@@ -821,7 +821,7 @@ async function refWords(from: number, to: number): Promise<Ref[]> {
   }
   return out;
 }
-async function transcribe(fileId: string): Promise<string> {
+async function transcribe(fileId: string, hint = ""): Promise<string> {
   const f = await (await tg("getFile", { file_id: fileId })).json();
   const path = f?.result?.file_path;
   if (!path) throw new Error("tg_file");
@@ -832,6 +832,9 @@ async function transcribe(fileId: string): Promise<string> {
   fd.append("language", "ar");
   fd.append("temperature", "0");
   fd.append("response_format", "json");
+  // ipucu: faqat boshlang'ich 1-2 oyat (imlo va uslubni to'g'ri tanishi uchun). Hammasini bermaymiz,
+  // aks holda Whisper o'qilmagan joyni ham "to'g'ri" qilib yozib, haqiqiy xatolarni yashirib qo'yadi.
+  if (hint) fd.append("prompt", hint.slice(0, 400));
   const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
   });
@@ -855,8 +858,12 @@ async function aiAnalyze(uid: number, range: [number, number], fileId: string, s
       return send(circ.admin_id, `🤖 AI tahlil: <b>${esc(mem.name)}</b> oralig'i juda katta (4 betdan ko'p), tahlil qilinmadi.`);
     }
     const ref = await refWords(range[0], range[1]);
-    const text = await transcribe(fileId);
-    const hyp = words(text);
+    const hint = (await Promise.all([range[0], Math.min(range[0] + 1, range[1])].filter((x, i, a) => a.indexOf(x) === i)
+      .map(async (id) => { const [su, ay] = fromId(id); return (await surahTexts(su))[ay - 1] ?? ""; }))).join(" ");
+    const text = await transcribe(fileId, hint);
+    let hyp = words(text);
+    // Whisper ipucuni o'zi qaytarib yuborgan bo'lsa (ovoz bo'sh/shovqin) — haqiqiy o'qish emas
+    if (hyp.join(" ") === words(hint).join(" ")) hyp = [];
     if (hyp.length < Math.min(3, ref.length)) {
       return send(circ.admin_id, `🤖 AI tahlil: <b>${esc(mem.name)}</b> ovozidan matn deyarli chiqmadi (tovush past yoki shovqin). O'zingiz eshiting.`);
     }

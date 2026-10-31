@@ -23,7 +23,8 @@ function sim(a: string, b: string): number {
   }
   return 1 - prev[m] / Math.max(n, m);
 }
-const MATCH = 0.7; // shundan yuqori o'xshashlik = to'g'ri o'qilgan (Whisper imlo farqlari uchun)
+// shundan yuqori o'xshashlik = to'g'ri o'qilgan (Whisper imlo farqlari uchun); uzun so'zlarda biroz yumshoqroq
+const matchOf = (a: string, b: string) => sim(a, b) >= (Math.max(a.length, b.length) >= 5 ? 0.6 : 0.7);
 
 export type Ref = { w: string; ayah: number; no: number }; // ayah = global oyat raqami, no = oyatdagi so'z tartibi (1..)
 export type Issue =
@@ -39,8 +40,8 @@ export function align(ref: Ref[], hyp: string[]): { issues: Issue[]; matched: nu
   for (let i = 1; i <= n; i++) { D[i][0] = i; B[i][0] = 2; }
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
-      const s = sim(ref[i - 1].w, hyp[j - 1]);
-      const diag = D[i - 1][j - 1] + (s >= MATCH ? 0 : 1);
+      const s = matchOf(ref[i - 1].w, hyp[j - 1]);
+      const diag = D[i - 1][j - 1] + (s ? 0 : 1);
       const up = D[i - 1][j] + 1;
       const left = D[i][j - 1] + 1;
       if (diag <= up && diag <= left) { D[i][j] = diag; B[i][j] = 1; }
@@ -55,7 +56,7 @@ export function align(ref: Ref[], hyp: string[]): { issues: Issue[]; matched: nu
   let i = n;
   while (i > 0 || j > 0) {
     const b = i === 0 ? 3 : j === 0 ? 2 : B[i][j];
-    if (b === 1) { ops.push({ t: sim(ref[i - 1].w, hyp[j - 1]) >= MATCH ? "m" : "s", r: i - 1, h: j - 1 }); i--; j--; }
+    if (b === 1) { ops.push({ t: matchOf(ref[i - 1].w, hyp[j - 1]) ? "m" : "s", r: i - 1, h: j - 1 }); i--; j--; }
     else if (b === 2) { ops.push({ t: "d", r: i - 1 }); i--; }
     else { ops.push({ t: "i", h: j - 1 }); j--; }
   }
