@@ -1106,8 +1106,6 @@ async function actPlus(a: string, uid: number, name: string, mid?: number): Prom
     return true;
   }
   if (a === "ls" && mem) {
-    const p = await getPos(uid);
-    if (!p) { await send(uid, "Avval boshlanish nuqtasini tanlang 👇", { inline_keyboard: [[{ text: "📍 Tanlash", callback_data: "ps" }]] }); return true; }
     await send(uid, "▶️ Qaysi vaqtda yodlaysiz?", { inline_keyboard: [
       [{ text: SLOTS.fajr, callback_data: "lw:fajr" }],
       [{ text: SLOTS.isha, callback_data: "lw:isha" }],
@@ -1591,7 +1589,6 @@ async function rpc(req: Request) {
       if (!mem) return forbid();
       const h = numIn(body.hours, 12), slot = SLOTS[String(body.slot)] ? String(body.slot) : "other";
       if (!h) return bad();
-      if (!(await getPos(uid))) return json({ error: "no_position" }, 400);
       await liveStart(uid, name, slot, h, true);
       return ok();
     }
