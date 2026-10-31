@@ -1,6 +1,7 @@
 // Hifz Tracker v3: yo'naltiruvchi (admin) tasdiqlaydigan haftalik reja tizimi
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { PAGE_FIRST, SURAH_AYAHS } from "./quran-data.ts";
+import { PAGE_FIRST, SURAH_AYAHS, SURAH_NAMES } from "./quran-data.ts";
+import { align, words, type Ref } from "./analyze.ts";
 import { ayahId, dayBlocks, fromId, splitBlocks, eta as etaDate, label, nextBlock, pagesIn, TOTAL, validSA, weekBlock, type Dir } from "./plan.ts";
 
 const BOT = Deno.env.get("BOT_TOKEN")!;
@@ -795,6 +796,115 @@ async function askMonthStart(adminUid: number, memberId: number, pages: number) 
     { inline_keyboard: [...rows, [{ text: "⬅️ Bekor", callback_data: `as:${memberId}` }]] });
 }
 
+// ---------- v11: AI ovoz tahlili (Whisper + so'zma-so'z solishtirish) ----------
+// Sozlash: Supabase secret GROQ_API_KEY. Kalit yo'q bo'lsa, tahlil o'chiq turadi (hech narsa buzilmaydi).
+const GROQ_KEY = Deno.env.get("GROQ_API_KEY") ?? "";
+const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "whisper-large-v3";
+const QURAN_CDN = "https://cdn.jsdelivr.net/npm/quran-json@3.1.2/dist/chapters/";
+const _surahCache = new Map<number, string[]>();
+async function surahTexts(n: number): Promise<string[]> {
+  const c = _surahCache.get(n);
+  if (c) return c;
+  const r = await fetch(`${QURAN_CDN}${n}.json`);
+  if (!r.ok) throw new Error("quran_text");
+  const j = await r.json();
+  const v = (j.verses as { text: string }[]).map((x) => x.text);
+  _surahCache.set(n, v);
+  return v;
+}
+async function refWords(from: number, to: number): Promise<Ref[]> {
+  const out: Ref[] = [];
+  for (let id = from; id <= to; id++) {
+    const [su, ay] = fromId(id);
+    const txt = (await surahTexts(su))[ay - 1] ?? "";
+    words(txt).forEach((w, i) => out.push({ w, ayah: id, no: i + 1 }));
+  }
+  return out;
+}
+async function transcribe(fileId: string): Promise<string> {
+  const f = await (await tg("getFile", { file_id: fileId })).json();
+  const path = f?.result?.file_path;
+  if (!path) throw new Error("tg_file");
+  const audio = await (await fetch(`https://api.telegram.org/file/bot${BOT}/${path}`)).arrayBuffer();
+  const fd = new FormData();
+  fd.append("file", new Blob([audio], { type: "audio/ogg" }), "voice.ogg");
+  fd.append("model", GROQ_MODEL);
+  fd.append("language", "ar");
+  fd.append("temperature", "0");
+  fd.append("response_format", "json");
+  const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
+  });
+  if (!r.ok) throw new Error("groq_" + r.status);
+  return String((await r.json()).text ?? "");
+}
+// fon rejimida bajarish (Edge Runtime bo'lsa javobni to'xtatmaydi)
+function background(p: Promise<unknown>) {
+  const safe = p.catch((e) => console.error("ai", e));
+  const er = (globalThis as any).EdgeRuntime;
+  return er?.waitUntil ? er.waitUntil(safe) : safe;
+}
+
+const AI_MAX_ITEMS = 8;
+async function aiAnalyze(uid: number, range: [number, number], fileId: string, sessionId: number) {
+  const mem = await memberOf(uid);
+  const circ = mem ? await circleById(mem.circle_id) : null;
+  if (!mem || !circ) return;
+  try {
+    if (pagesIn(range[0], range[1]) > 4) {
+      return send(circ.admin_id, `🤖 AI tahlil: <b>${esc(mem.name)}</b> oralig'i juda katta (4 betdan ko'p), tahlil qilinmadi.`);
+    }
+    const ref = await refWords(range[0], range[1]);
+    const text = await transcribe(fileId);
+    const hyp = words(text);
+    if (hyp.length < Math.min(3, ref.length)) {
+      return send(circ.admin_id, `🤖 AI tahlil: <b>${esc(mem.name)}</b> ovozidan matn deyarli chiqmadi (tovush past yoki shovqin). O'zingiz eshiting.`);
+    }
+    const res = align(ref, hyp);
+    const pct = Math.round((res.matched / res.total) * 100);
+    const items = res.issues.slice(0, AI_MAX_ITEMS);
+    const head = `🤖 <b>AI tahlil (taxminiy)</b> — ${esc(mem.name)}\n📖 ${label(range[0])} → ${label(range[1])}\n✅ Mos so'zlar: <b>${pct}%</b> (${res.matched}/${res.total})`;
+    if (!items.length) {
+      return send(circ.admin_id, `${head}\n\nShubhali joy topilmadi 👍\n<i>Tajvid va talaffuzni AI baholamaydi — baribir eshiting.</i>`);
+    }
+    const rows: string[] = [];
+    const kb: unknown[][] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const [su, ay] = fromId(it.ayah);
+      const wno = it.kind === "missing" ? it.from : it.no;
+      const desc = it.kind === "missing" ? `so'z tushib qolgan: «${it.text}»`
+        : it.kind === "wrong" ? `boshqacha eshitildi: «${it.heard}» (kerak: «${it.expected}»)`
+        : `ortiqcha so'z: «${it.text}»`;
+      const { data: m } = await sb.from("mistakes").insert({
+        tg_id: uid, circle_id: mem.circle_id, by_id: uid, ayah: it.ayah, word: wno,
+        kind: it.kind === "missing" ? "forgot" : it.kind === "wrong" ? "wrong" : "other",
+        note: `🤖 ${desc}`.slice(0, 200), session_id: sessionId, status: "suggested", source: "ai",
+      }).select().single();
+      rows.push(`${i + 1}. ${SURAH_NAMES[su - 1]} ${ay}, ${wno}-so'z — ${desc}`);
+      if (m) kb.push([{ text: `✅ ${i + 1} — xato`, callback_data: `xy:${m.id}` }, { text: `❌ ${i + 1} — xato emas`, callback_data: `xn:${m.id}` }]);
+    }
+    const more = res.issues.length > items.length ? `\n… yana ${res.issues.length - items.length} ta (faqat birinchi ${AI_MAX_ITEMS} ko'rsatildi)` : "";
+    kb.push([{ text: "✅ Hammasini xato deb belgilash", callback_data: `xya:${sessionId}` }]);
+    await send(circ.admin_id,
+      `${head}\n\n${esc(rows.join("\n"))}${more}\n\n<i>AI adashishi mumkin (ayniqsa shovqin, tez o'qish). Qaror sizniki: tasdiqlasangiz a'zoga xato bo'lib boradi.</i>`,
+      { inline_keyboard: kb });
+  } catch (e) {
+    console.error("aiAnalyze", e);
+    await send(circ.admin_id, `🤖 AI tahlil bajarilmadi (${esc(String((e as Error).message ?? e))}). Ovozni o'zingiz eshiting.`).catch(() => {});
+  }
+}
+async function confirmMistake(adminUid: number, id: number, ok: boolean) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return;
+  const { data: m } = await sb.from("mistakes").select("*").eq("id", id).eq("circle_id", circ.id).eq("status", "suggested").maybeSingle();
+  if (!m) return;
+  await sb.from("mistakes").update({ status: ok ? "open" : "rejected" }).eq("id", id);
+  if (ok) {
+    await send(m.tg_id, `⚠️ Yo'naltiruvchi xato belgiladi:\n<b>${label(m.ayah)}</b>${m.word ? `, ${m.word}-so'z` : ""}${m.note ? `\n${esc(String(m.note).replace(/^🤖 /, ""))}` : ""}\n\nTuzatgach «📋 Xatolarim» dan belgilang.`).catch(() => {});
+  }
+}
+
 // ---------- v9: batafsil reja, jonli yodlash, xatolar ----------
 const hm = (d: Date | string | number) => new Date(new Date(d).getTime() + TZ * 3600e3).toISOString().slice(11, 16);
 const SLOTS: Record<string, string> = { fajr: "🌅 Bomdoddan keyin", isha: "🌙 Xufton namozidan keyin", other: "🕒 Boshqa vaqt" };
@@ -1042,6 +1152,7 @@ async function liveFinish(uid: number, name: string, range: [number, number] | n
     from_ayah: range?.[0] ?? null, to_ayah: range?.[1] ?? null, pages: range ? pages : null,
     voice_file: voice, report_id: rid,
   }).eq("id", s.id);
+  if (voice && range && GROQ_KEY) await background(aiAnalyze(uid, range, voice, s.id));
   await broadcast(mem.circle_id, uid,
     `⏹ <b>${esc(mem.name)}</b> yodlashni tugatdi (${s.win_from}–${hm(new Date())})` +
     (range ? `\n📖 ${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa)` : "") + (voice ? "\n🎙 Ovoz yo'naltiruvchiga yuborildi" : ""));
@@ -1134,6 +1245,17 @@ async function actPlus(a: string, uid: number, name: string, mid?: number): Prom
   const mem = await memberOf(uid);
   const setS = (state: string, data: unknown = {}) => sb.from("sessions").upsert({ tg_id: uid, state, data });
 
+  if ((a.startsWith("xy:") || a.startsWith("xn:")) && circ) {
+    await confirmMistake(uid, Number(a.slice(3)), a.startsWith("xy:"));
+    await send(uid, a.startsWith("xy:") ? "✅ Xato sifatida belgilandi, a'zoga yuborildi." : "❌ Xato emas deb olib tashlandi.");
+    return true;
+  }
+  if (a.startsWith("xya:") && circ) {
+    const { data: ms } = await sb.from("mistakes").select("id").eq("circle_id", circ.id).eq("session_id", Number(a.slice(4))).eq("status", "suggested");
+    for (const m of ms ?? []) await confirmMistake(uid, m.id, true);
+    await send(uid, `✅ ${(ms ?? []).length} ta xato belgilandi, a'zoga yuborildi.`);
+    return true;
+  }
   if (a.startsWith("mp:") && circ) {
     const id = Number(a.slice(3));
     await send(uid, "🗓 Oylik reja: shu oy necha sahifa?", numKb(`mn:${id}`, `as:${id}`, [5, 10, 15, 20, 25, 30, 40, 60]));
@@ -1739,7 +1861,7 @@ async function rpc(req: Request) {
     case "mist_list": {
       const target = admin && body.id ? Number(body.id) : uid;
       if (target !== uid && !(await memberInCircle(uid, target))) return forbid();
-      const { data } = await sb.from("mistakes").select("*").eq("tg_id", target)
+      const { data } = await sb.from("mistakes").select("*").eq("tg_id", target).in("status", ["open", "fixed"])
         .order("created_at", { ascending: false }).limit(60);
       return json({
         kinds: KINDS,
