@@ -26,14 +26,12 @@ function memberSheet(m) {
     w.append(h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "🎯 Bu hafta"), h("b", {}, m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q")),
       ...ltInfo(m.lt).map(([t, v]) => h("div", { class: "row" }, h("span", {}, t), h("b", {}, v)))));
-    if (m.lt.suggest) w.append(h("button", { class: "btn primary wide", onclick: () => { close(); act("setgoal", { id: m.id, pages: m.lt.suggest }, "✅ Haftalik belgilandi"); } },
-      "💡 Tavsiya: haftalik " + fmt(m.lt.suggest) + " sahifa"));
+    w.append(h("button", { class: "btn primary wide", onclick: () => { close(); monthPlanSheet(m); } }, "🗓 Oylik reja"));
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🎯 " + m.name + ": bu hafta necha sahifa?", nums: NUMS,
-      onPick: v => act("setgoal", { id: m.id, pages: v }, "✅ Haftalik belgilandi") }); } }, "🎯 Haftalik belgilash"));
-    w.append(h("button", { class: "btn wide", onclick: () => { close(); monthPlanSheet(m); } }, "🗓 Oylik reja (kunlarga bo'linadi)"));
+      onPick: v => act("setgoal", { id: m.id, pages: v }, "✅ Haftalik belgilandi") }); } }, "🎯 Haftalik"));
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🗓 " + m.name + ": yillik necha juz?", nums: [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30], max: 30,
       hint: "1 juz = 20 sahifa. Reja 52 hafta davom etadi.",
-      onPick: v => act("setyear", { id: m.id, juz: v }, "✅ Yillik reja belgilandi") }); } }, "🗓 Yillik (juz)"));
+      onPick: v => act("setyear", { id: m.id, juz: v }, "✅ Yillik reja belgilandi") }); } }, "📆 Yillik"));
     w.append(h("div", { class: "actions", style: "margin-top:8px" },
       h("button", { class: "btn", onclick: () => { close(); memberPlanSheet(m); } }, "🗺 Reja"),
       h("button", { class: "btn", onclick: () => { close(); memberMistakesSheet(m); } }, "⚠️ Xatolar")));
@@ -72,42 +70,6 @@ async function inviteFlow() {
   } catch (e) { toast("Xato: " + e.message); }
 }
 
-// ---------- Umumiy ----------
-async function dashView() {
-  const d = await rpc("members"), ms = d.members, root = h("div");
-  const g = { done: [], track: [], behind: [], none: [] };
-  ms.forEach(m => g[statusOf(m)].push(m));
-  const sumGoal = ms.reduce((s, m) => s + m.goal, 0), sumApp = ms.reduce((s, m) => s + m.approved, 0);
-  const sumPen = ms.reduce((s, m) => s + m.pending, 0), sumExp = ms.reduce((s, m) => s + m.expected, 0);
-  const withGoal = ms.length - g.none.length;
-  const pc = S.me.pendingCount || 0;
-
-  root.append(h("div", { class: "kpis" },
-    h("div", { class: "kpi" }, h("b", {}, String(ms.length)), h("span", {}, "a'zo")),
-    h("div", { class: "kpi tap" + (pc ? " alert" : ""), onclick: () => { S.tab = "pending"; render(); } }, h("b", {}, String(pc)), h("span", {}, "tekshirilmagan ›")),
-    h("div", { class: "kpi" }, h("b", {}, g.done.length + "/" + withGoal), h("span", {}, "hafta maqsadini bajardi")),
-    h("div", { class: "kpi" + (g.none.length ? " alert" : "") }, h("b", {}, String(g.none.length)), h("span", {}, "rejasiz"))));
-
-  root.append(h("div", { class: "card" },
-    h("div", { class: "row" }, h("b", {}, "Guruh haftalik progressi"), h("span", { class: "num" }, sumGoal ? fmt(sumApp) + " / " + fmt(sumGoal) : "—")),
-    sumGoal ? bar(sumApp, sumPen, sumGoal, sumExp) : null,
-    h("div", { class: "meta" }, sumGoal ? "Bugungacha kerak: " + fmt(sumExp) + " sahifa" + (sumPen ? " · ⏳ " + fmt(sumPen) : "") : "Hali hech kimga reja belgilanmagan")));
-
-  const section = (title, list, fn) => { if (!list.length) return; root.append(h("div", { class: "sec" }, title + " (" + list.length + ")"),
-    h("div", { class: "names" }, list.map(m => h("button", { onclick: () => memberSheet(m) }, m.name, fn ? h("small", {}, fn(m)) : null)))); };
-  section("⚠️ Orqada qolganlar", g.behind, m => "qoldi " + fmt(Math.max(0, m.goal - m.approved - m.pending)));
-  section("🎯 Reja belgilanmaganlar", g.none, m => m.lt.suggest ? "tavsiya " + fmt(m.lt.suggest) : "");
-  section("👍 Reja bo'yicha", g.track, m => fmt(m.approved) + "/" + fmt(m.goal));
-  section("🎉 Bajarganlar", g.done);
-
-  const lines = ms.slice().sort((a, b) => (b.goal ? b.approved / b.goal : 0) - (a.goal ? a.approved / a.goal : 0)).map(m =>
-    (m.goal && m.approved >= m.goal ? "🎉" : "•") + " " + m.name + " — ✅" + fmt(m.approved) + (m.pending ? " ⏳" + fmt(m.pending) : "") + " / " + (m.goal ? fmt(m.goal) : "reja yo'q"));
-  const text = "📈 Hafta hisoboti (" + d.week_start + ")\n\n" + lines.join("\n") + "\n\nJami tasdiqlangan: " + fmt(sumApp) + " sahifa";
-  root.append(h("div", { class: "actions", style: "margin-top:16px" },
-    h("button", { class: "btn", onclick: () => copyOrShow(text) }, "📋 Hafta hisobotini nusxalash")));
-  return root;
-}
-
 // ---------- Tekshirish ----------
 async function pendingView() {
   const d = await rpc("pending");
@@ -126,10 +88,19 @@ async function pendingView() {
 const FILTERS = [["all", "Hammasi"], ["behind", "⚠️ Orqada"], ["none", "🎯 Rejasiz"], ["done", "🎉 Bajargan"]];
 async function membersView() {
   const d = await rpc("members"), root = h("div");
+  const ms0 = d.members, sumGoal = ms0.reduce((x, m) => x + m.goal, 0), sumApp = ms0.reduce((x, m) => x + m.approved, 0);
+  const lines = ms0.slice().sort((a, b) => (b.goal ? b.approved / b.goal : 0) - (a.goal ? a.approved / a.goal : 0)).map(m =>
+    (m.goal && m.approved >= m.goal ? "🎉" : "•") + " " + m.name + " — ✅" + fmt(m.approved) + (m.pending ? " ⏳" + fmt(m.pending) : "") + " / " + (m.goal ? fmt(m.goal) : "reja yo'q"));
+  root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("b", {}, "Shu hafta"), h("span", { class: "num" }, sumGoal ? fmt(sumApp) + " / " + fmt(sumGoal) : "—")),
+    sumGoal ? bar(sumApp, 0, sumGoal) : null,
+    h("div", { class: "actions", style: "margin:10px 0 0" },
+      h("button", { class: "btn", onclick: inviteFlow }, "🔗 Taklif"),
+      h("button", { class: "btn", onclick: () => copyOrShow("📈 Hafta hisoboti (" + d.week_start + ")\n\n" + lines.join("\n") + "\n\nJami tasdiqlangan: " + fmt(sumApp) + " sahifa") }, "📋 Hisobot"))));
   root.append(h("div", { class: "seg wrap" }, FILTERS.map(([k, l]) =>
     h("button", { class: k === (S.filter || "all") ? "on" : "", onclick: () => { S.filter = k; render(); } }, l))));
   const list = d.members.filter(m => (S.filter || "all") === "all" || statusOf(m) === S.filter);
-  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. Sozlamalardan taklif havolasini yuboring."));
+  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. «🔗 Taklif» ni bosib havolani yuboring."));
   else if (!list.length) root.append(h("div", { class: "msg" }, "Bu bo'limda hech kim yo'q."));
   list.forEach(m => {
     const c = h("div", { class: "card tap", onclick: () => memberSheet(m) },
@@ -143,31 +114,11 @@ async function membersView() {
   return root;
 }
 
-// ---------- Sozlamalar ----------
-async function settingsView() {
-  const root = h("div");
-  root.append(h("div", { class: "card" },
-    h("div", { class: "row" }, h("b", {}, "🔗 Taklif havolasi")),
-    h("div", { class: "meta" }, "A'zolarni halqaga qo'shish uchun havolani yuboring."),
-    h("button", { class: "btn primary wide", onclick: inviteFlow }, "Havolani olish")));
-  root.append(h("div", { class: "card" },
-    h("div", { class: "row" }, h("b", {}, "👤 A'zo sifatida")),
-    S.me.isMember
-      ? [h("div", { class: "meta" }, "Siz halqa a'zosisiz ham: o'z natijangizni a'zo sahifasida ko'rasiz."), h("a", { class: "btn wide", style: "display:block;text-align:center;text-decoration:none", href: "../" }, "👤 A'zo ko'rinishiga o'tish")]
-      : [h("div", { class: "meta" }, "O'zingiz ham yodlasangiz, a'zo sifatida qo'shiling."), h("button", { class: "btn wide", onclick: () => act("join", {}, "✅ Siz ham a'zosiz") }, "➕ Men ham a'zoman")]));
-  root.append(h("div", { class: "card" },
-    h("div", { class: "row" }, h("b", {}, "ℹ️ Ma'lumot")),
-    h("div", { class: "meta", style: "flex-direction:column;gap:4px" },
-      h("span", {}, "Hafta boshlanishi: " + S.me.week_start), h("span", {}, "Ish kunlari: dushanba–shanba, yakshanba dam"),
-      h("span", {}, "Telegram ID: " + S.me.uid))));
-  return root;
-}
-
-const VIEWS = { dash: dashView, pending: pendingView, members: membersView, live: liveView, rank: rankView, settings: settingsView };
+const VIEWS = { pending: pendingView, members: membersView, live: liveView, rank: rankView };
 let R = 0;
 function tabs() {
-  return [["dash", "📋", "Umumiy"], ["pending", "⏳", "Tekshirish" + (S.me.pendingCount ? " (" + S.me.pendingCount + ")" : "")],
-    ["members", "👥", "A'zolar"], ["live", "🔴", "Hozir"], ["rank", "🏆", "Reyting"], ["settings", "⚙️", "Sozlamalar"]];
+  return [["pending", "⏳", "Tekshirish" + (S.me.pendingCount ? " (" + S.me.pendingCount + ")" : "")],
+    ["members", "👥", "A'zolar"], ["live", "🔴", "Hozir"], ["rank", "🏆", "Reyting"]];
 }
 async function render() {
   const my = ++R;
@@ -176,7 +127,7 @@ async function render() {
   const body = h("div", {}, h("div", { class: "msg" }, "Yuklanmoqda…"));
   $app.replaceChildren(
     h("div", { class: "top" }, h("div", {}, h("h1", {}, "👑 Yo'naltiruvchi paneli"), h("div", { class: "sub" }, S.me.name + " · hafta " + S.me.week_start)),
-      S.me.isMember ? h("a", { class: "pill", href: "../" }, "👤 A'zo") : null),
+      S.me.isMember ? h("a", { class: "pill", href: "../" }, "👤 A'zo") : h("button", { class: "pill", style: "border:0", onclick: () => act("join", {}, "✅ Siz ham a'zosiz") }, "➕ A'zo bo'lish")),
     body, nav);
   try {
     const view = await VIEWS[S.tab]();
@@ -194,7 +145,7 @@ async function render() {
       : "Yuklanmadi. Birozdan keyin qayta urinib ko'ring.", T);
   }
   if (!S.me.isAdmin) return showMsg("Bu panel faqat yo'naltiruvchi uchun.<br><a href='../'>A'zo sahifasiga o'tish</a>", T);
-  S.tab = "dash";
+  S.tab = S.me.pendingCount ? "pending" : "members";
   render();
 })();
 </script>

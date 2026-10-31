@@ -122,6 +122,9 @@ async function planView() {
     h("button", { class: "btn primary", onclick: startPicker }, "📍 Boshlanish nuqtasi"),
     pi.has ? h("button", { class: "btn", onclick: () => act("plan_dir", {}, "🔄 Yo'nalish o'zgardi") }, pi.dir === 1 ? "🔄 Orqaga" : "🔄 Oldinga") : null));
   root.append(planCard(pi));
+  root.append(h("div", { class: "sec" }, "⚠️ Xatolarim"));
+  root.append(h("div", { class: "actions" }, h("button", { class: "btn", onclick: () => mistakeSheet(null, render) }, "⚠️ Xato belgilash")));
+  root.append(await mistakesList(null, true, render));
   return root;
 }
 

@@ -48,11 +48,11 @@ async function homeView() {
   return root;
 }
 
-const VIEWS = { home: homeView, plan: planView, live: liveView, mist: mistakesView, rank: rankView };
+const VIEWS = { home: homeView, plan: planView, live: liveView, rank: rankView };
 let R = 0;
 async function render() {
   const my = ++R;
-  const nav = h("nav", { class: "nav" }, [["home", "📊", "Natijam"], ["plan", "🗺", "Reja"], ["live", "🔴", "Hozir"], ["mist", "⚠️", "Xatolar"], ["rank", "🏆", "Reyting"]].map(([id, ic, lb]) =>
+  const nav = h("nav", { class: "nav" }, [["home", "📊", "Natijam"], ["plan", "🗺", "Reja"], ["live", "🔴", "Hozir"], ["rank", "🏆", "Reyting"]].map(([id, ic, lb]) =>
     h("button", { class: id === S.tab ? "on" : "", onclick: () => { S.tab = id; render(); } }, h("span", { class: "ic" }, ic), h("span", {}, lb))));
   const body = h("div", {}, h("div", { class: "msg" }, "Yuklanmoqda…"));
   $app.replaceChildren(

@@ -254,30 +254,31 @@ const numKb = (prefix: string, back: string, nums: number[] = NUMS) => ({
 
 function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
   const rows: unknown[][] = [];
-  if (isMem) {
-    rows.push([{ text: "📖 Yodladim", callback_data: "rp" }]);
-    rows.push([{ text: "📊 Natijam", callback_data: "me" }]);
-    rows.push([
-      { text: "▶️ Yodlash (jonli)", callback_data: "lm" },
-      { text: "🗺 Rejam", callback_data: "pl" },
-    ]);
-  }
-  if (isMem || isAdmin) rows.push([
-    { text: "🏆 Reyting", callback_data: "top:w" },
-    { text: "🔴 Hozir kim?", callback_data: "lv" },
-  ]);
-  if (isMem) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
   if (isAdmin) {
     rows.push([{ text: `⏳ Tekshirish${pending ? ` (${pending})` : ""}`, callback_data: "ap" }]);
     rows.push([
-      { text: "👥 A'zolar va rejalar", callback_data: "al" },
-      { text: "📈 Hafta hisoboti", callback_data: "ar" },
+      { text: "👥 A'zolar", callback_data: "al" },
+      { text: "🏆 Reyting", callback_data: "top:w" },
     ]);
+    rows.push([{ text: "🔴 Hozir kim yodlayapti", callback_data: "lv" }]);
     rows.push([
-      { text: "🔗 Taklif havolasi", callback_data: "inv" },
+      { text: "🔗 Taklif", callback_data: "inv" },
       { text: "👑 Panel", web_app: { url: SITE + "admin/" } },
     ]);
     if (!isMem) rows.push([{ text: "➕ Men ham a'zoman", callback_data: "join" }]);
+  }
+  if (isMem) {
+    rows.push([{ text: "📖 Yodladim", callback_data: "rp" }]);
+    rows.push([{ text: "▶️ Yodlashni boshlash / tugatish", callback_data: "lm" }]);
+    rows.push([
+      { text: "🗺 Rejam", callback_data: "pl" },
+      { text: "📊 Natijam", callback_data: "me" },
+    ]);
+    if (!isAdmin) rows.push([
+      { text: "🏆 Reyting", callback_data: "top:w" },
+      { text: "🔴 Hozir kim?", callback_data: "lv" },
+    ]);
+    if (!isAdmin) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
   }
   return { inline_keyboard: rows };
 }
@@ -301,7 +302,7 @@ async function showMenu(uid: number, name: string, pre?: string) {
     pending = count ?? 0;
   }
   const head = pre ?? `Assalomu alaykum, <b>${esc(name)}</b>! 🌙`;
-  return send(uid, `${head}\n\nPastdagi tugmalardan foydalaning 👇`, menuKb(!!circ, !!mem, pending));
+  return send(uid, `${head}\n\n${circ ? "Nima qilamiz?" : "Tugmalardan birini bosing 👇"}`, menuKb(!!circ, !!mem, pending));
 }
 
 // ---------- matnlar ----------
@@ -608,9 +609,9 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     const st = await statsFor(ms.map((m) => m.tg_id), ws);
     const body = ms.map((m) => lineFor(m.name, st.get(m.tg_id)!)).join("\n");
     return send(uid,
-      `👥 <b>A'zolar</b> (hafta: ${ws})\n\n${body}\n\nReja belgilash uchun ismni bosing 👇`,
+      `👥 <b>A'zolar</b>\n\n${body}\n\nReja kiritish uchun ismni bosing 👇`,
       { inline_keyboard: [
-        ...ms.map((m) => [{ text: `🎯 ${m.name}`, callback_data: `as:${m.tg_id}` }]),
+        ...ms.map((m) => [{ text: `👤 ${m.name}`, callback_data: `as:${m.tg_id}` }]),
         [{ text: "⬅️ Orqaga", callback_data: "m" }],
       ] });
   }
@@ -621,18 +622,12 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     if (!m) return send(uid, "A'zo topilmadi.");
     const s = (await statsFor([id], ws)).get(id)!;
     const lt = await longTerm(id);
-    const rows: unknown[][] = [];
-    if (lt.suggest) rows.push([{ text: `💡 Tavsiya: haftalik ${fmt(lt.suggest)} sahifa`, callback_data: `ss:${id}:${lt.suggest}` }]);
-    rows.push([
-      { text: "🎯 Haftalik", callback_data: `aw:${id}` },
-      { text: "🗓 Oylik reja", callback_data: `mp:${id}` },
-      { text: "📆 Yillik", callback_data: `ay:${id}` },
-    ]);
-    rows.push([
-      { text: "🗺 Reja", callback_data: `ap:${id}` },
-      { text: "⚠️ Xatolar", callback_data: `xa:${id}` },
-    ]);
-    rows.push([{ text: "⬅️ Orqaga", callback_data: "al" }]);
+    const rows: unknown[][] = [
+      [{ text: "🗓 Oylik reja", callback_data: `mp:${id}` }],
+      [{ text: "🎯 Haftalik", callback_data: `aw:${id}` }, { text: "📆 Yillik", callback_data: `ay:${id}` }],
+      [{ text: "🗺 Reja", callback_data: `ap:${id}` }, { text: "⚠️ Xatolar", callback_data: `xa:${id}` }],
+      [{ text: "⬅️ Orqaga", callback_data: "al" }],
+    ];
     return send(uid,
       `👤 <b>${esc(m.name)}</b>\n🎯 Bu hafta: ${s.goal ? `${fmt(s.approved)} / ${fmt(s.goal)}` : "reja yo'q"}${ltLines(lt)}`,
       { inline_keyboard: rows });
@@ -1159,7 +1154,7 @@ async function liveFinish(uid: number, name: string, range: [number, number] | n
     from_ayah: range?.[0] ?? null, to_ayah: range?.[1] ?? null, pages: range ? pages : null,
     voice_file: voice, report_id: rid,
   }).eq("id", s.id);
-  if (voice && range && GROQ_KEY) await background(aiAnalyze(uid, range, voice, s.id));
+  // AI tahlil hozircha o'chirilgan: yo'naltiruvchi ovozni o'zi eshitib qaror qiladi (aiAnalyze kodi saqlangan)
   await broadcast(mem.circle_id, uid,
     `⏹ <b>${esc(mem.name)}</b> yodlashni tugatdi (${s.win_from}–${hm(new Date())})` +
     (range ? `\n📖 ${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa)` : "") + (voice ? "\n🎙 Ovoz yo'naltiruvchiga yuborildi" : ""));
