@@ -255,10 +255,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
   const rows: unknown[][] = [];
   if (isMem) {
     rows.push([{ text: "📖 Yodladim", callback_data: "rp" }]);
-    rows.push([
-      { text: "📊 Natijam", callback_data: "me" },
-      { text: "🎯 Maqsad so'rash", callback_data: "gp" },
-    ]);
+    rows.push([{ text: "📊 Natijam", callback_data: "me" }]);
     rows.push([
       { text: "▶️ Yodlash (jonli)", callback_data: "lm" },
       { text: "🗺 Rejam", callback_data: "pl" },
@@ -311,7 +308,7 @@ function statsText(name: string, s: St, allTime: number, lt?: LT, rec?: { streak
   const lines = [`👤 <b>${esc(name)}</b>`, ""];
   if (!s.goal) {
     lines.push("🎯 Bu hafta uchun maqsad hali belgilanmagan.");
-    lines.push("«🎯 Haftalik maqsad» tugmasi bilan yo'naltiruvchiga yuboring.");
+    lines.push("Maqsadni yo'naltiruvchi belgilaydi.");
   } else {
     const left = Math.max(0, s.goal - s.approved - s.pending);
     const need = expected(s.goal);
@@ -590,35 +587,6 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       return send(uid, "Necha sahifa? Son yozing. Masalan: <code>2</code> yoki <code>1.5</code>");
     }
     return createReport(uid, name, Number(v));
-  }
-
-  if (a === "gp" && isMem) {
-    const lt = await longTerm(uid);
-    const x = ltLines(lt).trim();
-    return send(uid, `🎯 <b>Maqsad so'rash</b>\n\n📝 Hozirgi rejang:\n${await planSnapshot(uid)}${x ? "\n\n" + x : ""}\n\nQaysi maqsadni belgilamoqchisiz?`, { inline_keyboard: [
-      [{ text: "📅 Kunlik", callback_data: "gk:d" }, { text: "🎯 Haftalik", callback_data: "gk:w" }, { text: "🗓 Oylik", callback_data: "gk:m" }],
-      [{ text: "⬅️ Orqaga", callback_data: "m" }],
-    ] });
-  }
-  if (a.startsWith("gk:") && isMem) {
-    const k = a.slice(3);
-    const lt = await longTerm(uid);
-    const kb = k === "d" ? numKb("qd", "gp", [0.5, 1, 1.5, 2, 2.5, 3, 4])
-      : k === "m" ? numKb("qm", "gp", [5, 10, 15, 20, 25, 30, 40, 60])
-      : numKb("q", "gp");
-    if (k === "w" && lt.suggest) kb.inline_keyboard.unshift([{ text: `💡 Tavsiya: ${fmt(lt.suggest)} sahifa`, callback_data: `q:${lt.suggest}` }]);
-    const q = k === "d" ? "Kuniga necha sahifa yodlamoqchisiz?" : k === "m" ? "Shu oy necha sahifa yodlamoqchisiz? (yo'naltiruvchi qayerdan boshlashni kiritadi)" : "Bu hafta necha sahifa yodlamoqchisiz?";
-    return send(uid, `${q}\n(Yo'naltiruvchiga yuboriladi)`, kb);
-  }
-  for (const [pre, kind] of [["q:", "w"], ["qd:", "d"], ["qm:", "m"]] as const) {
-    if (a.startsWith(pre) && isMem) {
-      const v = a.slice(pre.length);
-      if (v === "x") {
-        await setSession("req:" + kind);
-        return send(uid, "Necha sahifa? Son yozing. Masalan: <code>15</code>");
-      }
-      return sendRequest(uid, name, Number(v), kind);
-    }
   }
 
   if (a === "me" && isMem) {
@@ -970,7 +938,7 @@ function planText(pi: PlanInfo) {
       for (const d of pi.days) if (d.pages > 0) L.push(`${d.today ? "👉" : "▫️"} ${d.day}: ${d.from} → ${d.to}`);
     }
   } else {
-    L.push("", "🎯 Bu hafta maqsad belgilanmagan — «🎯 Haftalik maqsad» ni bosing.");
+    L.push("", "🎯 Bu hafta maqsad hali belgilanmagan — yo'naltiruvchi belgilaydi.");
     if (pi.today) L.push(`📌 Taxminan 1 bet: ${pi.today.from} → ${pi.today.to}`);
   }
   L.push("", `⚡ O'rtacha tezlik: ${pageStr(pi.avgWeek)} bet/hafta`);
@@ -1621,13 +1589,8 @@ async function rpc(req: Request) {
       await createReport(uid, name, n, true);
       return ok();
     }
-    case "request": {
-      const kind = ["d", "w", "m"].includes(body.kind) ? body.kind : "w";
-      const n = numIn(body.pages, 100);
-      if (!mem || !n) return bad();
-      const old = await sendRequest(uid, name, n, kind, true);
-      return json({ ok: true, old: typeof old === "string" ? old : "" });
-    }
+    case "request":
+      return forbid(); // maqsadni faqat yo'naltiruvchi belgilaydi
     case "members": {
       if (!admin) return forbid();
       const { data: ms } = await sb.from("members").select("*").eq("circle_id", circId).order("joined_at");

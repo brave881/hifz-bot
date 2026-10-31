@@ -17,31 +17,10 @@ const reportFlow = () => numberSheet({ title: "📖 Necha sahifa yodladingiz?", 
   hint: "Yo'naltiruvchiga yuboriladi, u tekshirib tasdiqlaydi.",
   onPick: v => act("report", { pages: v }, "📨 Yuborildi, yo'naltiruvchi tekshiradi") });
 
-const sendReq = async (kind, v) => {
-  try {
-    const r = await rpc("request", { kind, pages: v });
-    toast("📨 So'rov yuborildi");
-    openSheet("📝 Sening rejang bu edi", () => h("div", {}, h("pre", { class: "old" }, r.old || ""),
-      h("div", { class: "meta" }, "Yo'naltiruvchi tasdiqlaydi.")));
-    await reload();
-  } catch (e) { toast("Xato: " + e.message); }
-};
-const goalFlow = () => openSheet("🎯 Maqsad so'rash", close => {
-  const w = h("div");
-  const lt = S.me.my.lt;
-  w.append(h("div", { class: "meta" }, "Yo'naltiruvchiga yuboriladi, u tasdiqlaydi."));
-  [["📅 Kunlik (sahifa/kun)", "d", [0.5, 1, 1.5, 2, 2.5, 3, 4], 100, null],
-   ["🎯 Haftalik (sahifa)", "w", NUMS, 100, lt.suggest],
-   ["🗓 Oylik (sahifa)", "m", [5, 10, 15, 20, 25, 30, 40, 60], 100, null]].forEach(([l, k, nums, max, sug]) =>
-    w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: l, nums, max, suggest: sug, onPick: v => sendReq(k, v) }); } }, l)));
-  return w;
-});
-
 async function homeView() {
   const my = S.me.my, root = h("div");
   root.append(h("div", { class: "actions" },
-    h("button", { class: "btn primary", onclick: reportFlow }, "📖 Yodladim"),
-    h("button", { class: "btn", onclick: goalFlow }, "🎯 Maqsad so'rash")));
+    h("button", { class: "btn primary", onclick: reportFlow }, "📖 Yodladim")));
 
   const card = h("div", { class: "card" },
     h("div", { class: "row" }, h("b", {}, "Haftalik maqsad"), h("span", { class: "num" }, my.goal ? fmt(my.approved) + " / " + fmt(my.goal) : "reja yo'q")));
@@ -54,7 +33,7 @@ async function homeView() {
         h("span", {}, "Qoldi: " + fmt(left)),
         my.pending ? h("span", {}, "⏳ Tekshirilmoqda: " + fmt(my.pending)) : null));
     if (my.approved + 1e-9 >= my.goal) card.append(h("div", { class: "banner" }, "🎉 Haftalik maqsad bajarildi! 🏖️ Qolgan kunlar izin"));
-  } else card.append(h("div", { class: "meta" }, "«Haftalik maqsad» tugmasi bilan yo'naltiruvchiga yuboring"));
+  } else card.append(h("div", { class: "meta" }, "Maqsadni yo'naltiruvchi belgilaydi"));
   root.append(card);
 
   ltInfo(my.lt).forEach(([t, v, d, g]) => root.append(h("div", { class: "card" },
