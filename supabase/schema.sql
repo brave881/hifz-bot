@@ -1,29 +1,49 @@
--- Jadvallar (SQL Editor'da bir marta Run qiling)
-create table if not exists members (
-  chat_id     bigint not null,
-  tg_id       bigint not null,
-  name        text   not null,
-  daily_goal  int    not null default 5,
-  streak      int    not null default 0,
-  best_streak int    not null default 0,
-  total_days  int    not null default 0,
-  last_date   date,
-  primary key (chat_id, tg_id)
+-- DIQQAT: eski sinov ma'lumotlari o'chadi (yangi tizim boshqa tuzilma).
+drop table if exists reports, goals, sessions, members, circles, logs, groups cascade;
+
+create table circles (
+  id         bigint generated always as identity primary key,
+  admin_id   bigint not null unique,
+  admin_name text   not null,
+  name       text   not null default 'Hifz halqasi',
+  join_code  text   not null unique,
+  view_code  text   not null unique
 );
 
-create table if not exists logs (
-  chat_id bigint not null,
-  tg_id   bigint not null,
-  day     date   not null,
-  primary key (chat_id, tg_id, day)
+create table members (
+  tg_id     bigint primary key,
+  circle_id bigint not null references circles(id) on delete cascade,
+  name      text   not null,
+  joined_at timestamptz not null default now()
 );
 
--- sayt havolasi uchun guruh kodi
-create table if not exists groups (
-  chat_id bigint primary key,
-  code    text   not null unique
+create table goals (
+  tg_id      bigint not null references members(tg_id) on delete cascade,
+  week_start date   not null,
+  pages      numeric not null,
+  primary key (tg_id, week_start)
 );
 
-alter table members enable row level security;
-alter table logs    enable row level security;
-alter table groups  enable row level security;
+create table reports (
+  id         bigint generated always as identity primary key,
+  tg_id      bigint not null references members(tg_id) on delete cascade,
+  circle_id  bigint not null,
+  week_start date   not null,
+  day        date   not null,
+  pages      numeric not null,
+  status     text   not null default 'pending', -- pending | approved | repeat
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+
+create table sessions (
+  tg_id bigint primary key,
+  state text   not null,
+  data  jsonb  not null default '{}'
+);
+
+alter table circles  enable row level security;
+alter table members  enable row level security;
+alter table goals    enable row level security;
+alter table reports  enable row level security;
+alter table sessions enable row level security;
