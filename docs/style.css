@@ -73,3 +73,4 @@
   .card.live { border-color: var(--green); }
   select { flex: 1; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 12px; font: inherit; }
   nav.nav button span:last-child { font-size: 10px; }
+  pre.old { white-space: pre-wrap; font: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }

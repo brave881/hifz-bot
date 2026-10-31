@@ -246,7 +246,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
     rows.push([{ text: "📖 Yodladim", callback_data: "rp" }]);
     rows.push([
       { text: "📊 Natijam", callback_data: "me" },
-      { text: "🎯 Haftalik maqsad", callback_data: "gp" },
+      { text: "🎯 Maqsad so'rash", callback_data: "gp" },
     ]);
     rows.push([
       { text: "▶️ Yodlash (jonli)", callback_data: "lm" },
@@ -345,19 +345,39 @@ async function createReport(uid: number, name: string, pages: number, quiet = fa
     menuKb(!!(await circleOfAdmin(uid)), true));
 }
 
-async function sendRequest(uid: number, name: string, pages: number, quiet = false) {
+// a'zoning hozirgi rejasi (so'rov yuborilganda "oldingi reja" sifatida ko'rsatiladi)
+async function planSnapshot(uid: number) {
+  const s = (await statsFor([uid], weekStart())).get(uid)!;
+  const lt = await longTerm(uid);
+  const L: string[] = [];
+  L.push(s.goal ? `📅 Kunlik: ~${fmt(s.goal / 6)} sahifa` : "📅 Kunlik: belgilanmagan");
+  L.push(s.goal ? `🎯 Haftalik: ${fmt(s.goal)} sahifa` : "🎯 Haftalik: belgilanmagan");
+  L.push(lt.month ? `🗓 Oylik (${lt.month.name}): ${fmt(lt.month.target / JUZ)} juz (${fmt(lt.month.target)} sahifa)` : "🗓 Oylik: belgilanmagan");
+  if (lt.plan) L.push(`📆 Yillik: ${fmt(lt.plan.juz)} juz`);
+  return L.join("\n");
+}
+const REQ_NAME: Record<string, string> = { d: "kunlik", w: "haftalik", m: "oylik" };
+const reqText = (v: number, kind: string) =>
+  kind === "d" ? `kuniga <b>${fmt(v)}</b> sahifa (haftasiga ${fmt(v * 6)})`
+    : kind === "m" ? `shu oy <b>${fmt(v)}</b> juz (${fmt(v * JUZ)} sahifa)`
+    : `bu hafta <b>${fmt(v)}</b> sahifa`;
+
+async function sendRequest(uid: number, name: string, v: number, kind = "w", quiet = false) {
   const mem = await memberOf(uid);
   if (!mem) return showMenu(uid, name);
   const circ = await circleById(mem.circle_id);
   if (!circ) return;
+  if (!REQ_NAME[kind]) kind = "w";
+  const old = await planSnapshot(uid); // so'rovdan OLDINGI reja
+  const cb = kind === "d" ? `gd:${uid}:${v}` : kind === "m" ? `gm:${uid}:${v}` : `ga:${uid}:${v}`;
   await send(circ.admin_id,
-    `🎯 <b>${esc(mem.name)}</b> bu hafta <b>${fmt(pages)}</b> sahifa yodlamoqchi.`,
+    `🎯 <b>${esc(mem.name)}</b> ${REQ_NAME[kind]} maqsad so'radi: ${reqText(v, kind)}\n\n📝 Uning rejasi bu edi:\n${old}`,
     { inline_keyboard: [[
-      { text: "✅ Qabul qilish", callback_data: `ga:${uid}:${pages}` },
+      { text: "✅ Qabul qilish", callback_data: cb },
       { text: "✏️ O'zgartirish", callback_data: `as:${uid}` },
     ]] });
-  if (quiet) return;
-  return send(uid, `📨 Maqsadingiz yuborildi: <b>${fmt(pages)}</b> sahifa.\nYo'naltiruvchi tasdiqlaydi.`,
+  if (quiet) return old;
+  return send(uid, `📨 So'rov yuborildi: ${reqText(v, kind)}.\n\n📝 Sening rejang bu edi:\n${old}\n\nYo'naltiruvchi tasdiqlaydi.`,
     menuKb(!!(await circleOfAdmin(uid)), true));
 }
 
@@ -562,21 +582,32 @@ async function act(a: string, uid: number, name: string, mid?: number) {
   }
 
   if (a === "gp" && isMem) {
-    const s = (await statsFor([uid], ws)).get(uid)!;
-    const cur = s.goal ? `Joriy maqsad: <b>${fmt(s.goal)}</b> sahifa.\n\n` : "";
     const lt = await longTerm(uid);
-    const kb = numKb("q", "m");
-    if (lt.suggest) kb.inline_keyboard.unshift([{ text: `💡 Tavsiya: ${fmt(lt.suggest)} sahifa`, callback_data: `q:${lt.suggest}` }]);
     const x = ltLines(lt).trim();
-    return send(uid, `🎯 ${cur}${x ? x + "\n\n" : ""}Bu hafta necha sahifa yodlamoqchisiz?\n(Yo'naltiruvchiga yuboriladi)`, kb);
+    return send(uid, `🎯 <b>Maqsad so'rash</b>\n\n📝 Hozirgi rejang:\n${await planSnapshot(uid)}${x ? "\n\n" + x : ""}\n\nQaysi maqsadni belgilamoqchisiz?`, { inline_keyboard: [
+      [{ text: "📅 Kunlik", callback_data: "gk:d" }, { text: "🎯 Haftalik", callback_data: "gk:w" }, { text: "🗓 Oylik", callback_data: "gk:m" }],
+      [{ text: "⬅️ Orqaga", callback_data: "m" }],
+    ] });
   }
-  if (a.startsWith("q:") && isMem) {
-    const v = a.slice(2);
-    if (v === "x") {
-      await setSession("req");
-      return send(uid, "Necha sahifa? Son yozing. Masalan: <code>3</code>");
+  if (a.startsWith("gk:") && isMem) {
+    const k = a.slice(3);
+    const lt = await longTerm(uid);
+    const kb = k === "d" ? numKb("qd", "gp", [0.5, 1, 1.5, 2, 2.5, 3, 4])
+      : k === "m" ? numKb("qm", "gp", [0.5, 1, 1.5, 2, 2.5, 3, 4, 5])
+      : numKb("q", "gp");
+    if (k === "w" && lt.suggest) kb.inline_keyboard.unshift([{ text: `💡 Tavsiya: ${fmt(lt.suggest)} sahifa`, callback_data: `q:${lt.suggest}` }]);
+    const q = k === "d" ? "Kuniga necha sahifa yodlamoqchisiz?" : k === "m" ? "Shu oy necha juz yodlamoqchisiz? (1 juz = 20 sahifa)" : "Bu hafta necha sahifa yodlamoqchisiz?";
+    return send(uid, `${q}\n(Yo'naltiruvchiga yuboriladi)`, kb);
+  }
+  for (const [pre, kind] of [["q:", "w"], ["qd:", "d"], ["qm:", "m"]] as const) {
+    if (a.startsWith(pre) && isMem) {
+      const v = a.slice(pre.length);
+      if (v === "x") {
+        await setSession("req:" + kind);
+        return send(uid, kind === "m" ? "Necha juz? Son yozing. Masalan: <code>1</code> yoki <code>0.5</code>" : "Necha sahifa? Son yozing. Masalan: <code>3</code>");
+      }
+      return sendRequest(uid, name, Number(v), kind);
     }
-    return sendRequest(uid, name, Number(v));
   }
 
   if (a === "me" && isMem) {
@@ -669,6 +700,16 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       return send(uid, "Necha sahifa? Son yozing. Masalan: <code>3</code>");
     }
     return setGoal(uid, Number(id), Number(v));
+  }
+  if (a.startsWith("gd:")) {
+    const [, id, v] = a.split(":");
+    if (mid) await edit(uid, mid, "✅ Qabul qilindi (kunlik)");
+    return setGoal(uid, Number(id), Number(v) * 6);
+  }
+  if (a.startsWith("gm:")) {
+    const [, id, v] = a.split(":");
+    if (mid) await edit(uid, mid, "✅ Qabul qilindi (oylik)");
+    return setMonth(uid, Number(id), Number(v), true);
   }
   if (a.startsWith("ga:")) {
     const [, id, v] = a.split(":");
@@ -1207,7 +1248,11 @@ async function handleText(uid: number, name: string, t: string) {
   }
   await sb.from("sessions").delete().eq("tg_id", uid);
   if (s.state === "report") return createReport(uid, name, n);
-  if (s.state === "req") return sendRequest(uid, name, n);
+  if (s.state === "req" || s.state.startsWith("req:")) {
+    const kind = s.state.startsWith("req:") ? s.state.slice(4) : "w";
+    if (kind === "m" && n > 30) return send(uid, "Juz soni 30 dan oshmasin.");
+    return sendRequest(uid, name, n, kind);
+  }
   if (s.state.startsWith("sg:")) return setGoal(uid, Number(s.state.slice(3)), n);
   if (s.state.startsWith("yg:")) return setYear(uid, Number(s.state.slice(3)), n);
   if (s.state.startsWith("mg:")) return setMonth(uid, Number(s.state.slice(3)), n);
@@ -1433,10 +1478,11 @@ async function rpc(req: Request) {
       return ok();
     }
     case "request": {
-      const n = numIn(body.pages);
+      const kind = ["d", "w", "m"].includes(body.kind) ? body.kind : "w";
+      const n = numIn(kind === "m" ? body.juz ?? body.pages : body.pages, kind === "m" ? 30 : 100);
       if (!mem || !n) return bad();
-      await sendRequest(uid, name, n, true);
-      return ok();
+      const old = await sendRequest(uid, name, n, kind, true);
+      return json({ ok: true, old: typeof old === "string" ? old : "" });
     }
     case "members": {
       if (!admin) return forbid();
