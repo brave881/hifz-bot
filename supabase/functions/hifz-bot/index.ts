@@ -45,6 +45,13 @@ const chunk = <T>(a: T[], n: number) =>
   Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 const rndCode = () => crypto.randomUUID().replace(/-/g, "").slice(0, 10);
 
+const JUZ = 20; // 1 juz = 20 sahifa
+const MONTHS = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun", "Iyul", "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr"];
+const addDays = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 864e5).toISOString().slice(0, 10);
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 864e5);
+const ceilHalf = (x: number) => Math.ceil(x * 2 - 1e-9) / 2;
+const monthEnd = (d: string) => { const [y, m] = d.split("-").map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
+
 let _key = "";
 async function secretKey() {
   if (_key) return _key;
@@ -111,11 +118,94 @@ async function statsFor(ids: number[], ws: string): Promise<Map<number, St>> {
   return map;
 }
 
+// ---------- uzoq muddatli reja (yillik / oylik) ----------
+type LT = {
+  plan?: { juz: number; pages: number; approved: number; weeksLeft: number; end: string };
+  month?: { name: string; target: number; approved: number; manual: boolean };
+  suggest?: number;
+};
+
+async function longTerm(uid: number): Promise<LT> {
+  const out: LT = {};
+  const today = day(), ws = weekStart();
+  const mKey = today.slice(0, 7), mStart = mKey + "-01", mEnd = monthEnd(today);
+  const { data: plan } = await sb.from("plans").select("*").eq("tg_id", uid).maybeSingle();
+  const { data: ov } = await sb.from("month_goals").select("pages").eq("tg_id", uid).eq("month", mKey).maybeSingle();
+  if (!plan && !ov) return out;
+  const { data: rs } = await sb.from("reports").select("day,pages").eq("tg_id", uid).eq("status", "approved");
+  const sum = (f: (d: string) => boolean) =>
+    (rs ?? []).filter((r) => f(r.day)).reduce((x, r) => x + Number(r.pages), 0);
+
+  let autoTarget: number | undefined;
+  if (plan) {
+    const pages = Number(plan.juz) * JUZ;
+    const end = addDays(plan.start_date, plan.weeks * 7 - 1);
+    out.plan = {
+      juz: Number(plan.juz), pages, end,
+      approved: sum((d) => d >= plan.start_date),
+      weeksLeft: Math.max(0, Math.ceil((daysBetween(today, end) + 1) / 7)),
+    };
+    if (today <= end) {
+      const base = mStart > plan.start_date ? mStart : plan.start_date;
+      const monthsLeft = Math.max(1, Math.ceil((daysBetween(base, end) + 1) / 30.44));
+      autoTarget = Math.max(0, pages - sum((d) => d >= plan.start_date && d < mStart)) / monthsLeft;
+      const weeksLeft = Math.max(1, Math.ceil((daysBetween(ws, end) + 1) / 7));
+      out.suggest = ceilHalf(Math.max(0, pages - sum((d) => d >= plan.start_date && d < ws)) / weeksLeft);
+    }
+  }
+  const target = ov ? Number(ov.pages) : autoTarget;
+  if (target !== undefined) {
+    out.month = {
+      name: MONTHS[Number(mKey.slice(5)) - 1], target, manual: !!ov,
+      approved: sum((d) => d >= mStart && d <= mEnd),
+    };
+  }
+  if (ov) {
+    const weeksLeftM = Math.max(1, Math.ceil((daysBetween(ws, mEnd) + 1) / 7));
+    out.suggest = ceilHalf(Math.max(0, Number(ov.pages) - sum((d) => d >= mStart && d < ws)) / weeksLeftM);
+  }
+  return out;
+}
+
+function ltLines(lt: LT) {
+  const l: string[] = [];
+  if (lt.plan) {
+    const p = lt.plan;
+    l.push(`📆 Yillik: <b>${fmt(p.juz)}</b> juz (${fmt(p.pages)} sahifa) — ${fmt(p.approved)}/${fmt(p.pages)} (${Math.round((p.approved / p.pages) * 100)}%), ${p.weeksLeft} hafta qoldi`);
+  }
+  if (lt.month) {
+    l.push(`🗓 ${lt.month.name}: ${fmt(lt.month.approved)} / ${fmt(lt.month.target)} sahifa${lt.month.manual ? " ✍️" : ""}`);
+  }
+  if (lt.suggest) l.push(`💡 Tavsiya etilgan haftalik: <b>${fmt(lt.suggest)}</b> sahifa`);
+  return l.length ? "\n" + l.join("\n") : "";
+}
+
+// bajarilgan haftalar va ketma-ket hafta seriyasi
+async function weekRecord(uid: number) {
+  const { data: gs } = await sb.from("goals").select("week_start,pages").eq("tg_id", uid);
+  const { data: rs } = await sb.from("reports").select("week_start,pages").eq("tg_id", uid).eq("status", "approved");
+  const app = new Map<string, number>();
+  for (const r of rs ?? []) app.set(r.week_start, (app.get(r.week_start) ?? 0) + Number(r.pages));
+  const done = new Set<string>();
+  for (const g of gs ?? []) {
+    if (Number(g.pages) > 0 && (app.get(g.week_start) ?? 0) + 1e-9 >= Number(g.pages)) done.add(g.week_start);
+  }
+  let w = weekStart();
+  if (!done.has(w)) w = addDays(w, -7);
+  let streak = 0;
+  while (done.has(w)) { streak++; w = addDays(w, -7); }
+  return { streak, total: done.size };
+}
+
+async function kbFor(uid: number) {
+  return menuKb(!!(await circleOfAdmin(uid)), !!(await memberOf(uid)));
+}
+
 // ---------- tugmalar ----------
 const NUMS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 12];
-const numKb = (prefix: string, back: string) => ({
+const numKb = (prefix: string, back: string, nums: number[] = NUMS) => ({
   inline_keyboard: [
-    ...chunk(NUMS, 4).map((row) => row.map((n) => ({ text: fmt(n), callback_data: `${prefix}:${n}` }))),
+    ...chunk(nums, 4).map((row) => row.map((n) => ({ text: fmt(n), callback_data: `${prefix}:${n}` }))),
     [{ text: "✍️ Boshqa son", callback_data: `${prefix}:x` }],
     [{ text: "⬅️ Orqaga", callback_data: back }],
   ],
@@ -169,7 +259,7 @@ async function showMenu(uid: number, name: string, pre?: string) {
 }
 
 // ---------- matnlar ----------
-function statsText(name: string, s: St, allTime: number) {
+function statsText(name: string, s: St, allTime: number, lt?: LT, rec?: { streak: number; total: number }) {
   const lines = [`👤 <b>${esc(name)}</b>`, ""];
   if (!s.goal) {
     lines.push("🎯 Bu hafta uchun maqsad hali belgilanmagan.");
@@ -187,7 +277,9 @@ function statsText(name: string, s: St, allTime: number) {
         : `⚠️ Bugungacha ${fmt(need)} sahifa bo'lishi kerak edi`,
     );
   }
+  if (lt) { const x = ltLines(lt).trim(); if (x) lines.push("", x); }
   lines.push("", `🏅 Hamma vaqt: ${fmt(allTime)} sahifa`);
+  if (rec) lines.push(`🏆 Bajarilgan haftalar: ${rec.total} · 🔥 seriya: ${rec.streak}`);
   return lines.join("\n");
 }
 
@@ -264,15 +356,68 @@ async function decide(uid: number, rid: number, status: "approved" | "repeat", m
   }
   if (status === "approved") {
     const st = (await statsFor([r.tg_id], r.week_start)).get(r.tg_id)!;
-    await send(r.tg_id,
-      `✅ Tasdiqlandi: <b>${fmt(Number(r.pages))}</b> sahifa. Barakalla! 🌟\n` +
-      (st.goal ? `Bu hafta: ${fmt(st.approved)} / ${fmt(st.goal)}` : ""),
-      menuKb(false, true));
+    const crossed = st.goal > 0 && st.approved + 1e-9 >= st.goal && st.approved - Number(r.pages) + 1e-9 < st.goal;
+    let msg = `✅ Tasdiqlandi: <b>${fmt(Number(r.pages))}</b> sahifa. Barakalla! 🌟\n` +
+      (st.goal ? `Bu hafta: ${fmt(st.approved)} / ${fmt(st.goal)}` : "");
+    if (crossed) {
+      const rec = await weekRecord(r.tg_id);
+      msg += `\n\n🎉 <b>Haftalik maqsad bajarildi!</b> 🏆\n` +
+        (r.week_start === weekStart() && dow() !== 6 && dow() !== 0
+          ? "🏖️ Haftaning qolgan kunlari — dam olish kuni, eslatma kelmaydi.\n" : "") +
+        `🔥 Hafta seriyasi: ${rec.streak}`;
+      await send(circ.admin_id,
+        `🏆 <b>${esc(nm)}</b> haftalik maqsadni bajardi (${fmt(st.approved)} / ${fmt(st.goal)}). Mukofotlang! 🎁`);
+    }
+    await send(r.tg_id, msg, await kbFor(r.tg_id));
   } else {
     await send(r.tg_id,
       `🔁 Yo'naltiruvchi <b>${fmt(Number(r.pages))}</b> sahifani qaytadan takrorlashingizni so'radi.\nTayyor bo'lgach, yana «📖 Yodladim» ni bosing.`,
       menuKb(false, true));
   }
+}
+
+async function memberInCircle(adminUid: number, memberId: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return null;
+  const { data: m } = await sb.from("members").select("*").eq("tg_id", memberId).eq("circle_id", circ.id).maybeSingle();
+  return m;
+}
+
+async function setYear(adminUid: number, memberId: number, juz: number) {
+  const m = await memberInCircle(adminUid, memberId);
+  if (!m) return send(adminUid, "A'zo topilmadi.");
+  await sb.from("plans").upsert({ tg_id: memberId, juz, start_date: weekStart(), weeks: 52 }, { onConflict: "tg_id" });
+  const lt = await longTerm(memberId);
+  if (memberId !== adminUid) {
+    await send(memberId,
+      `📆 Sizga yillik reja belgilandi: <b>${fmt(juz)}</b> juz (${fmt(juz * JUZ)} sahifa).` +
+      `${lt.suggest ? `\n💡 Haftalik taxminiy: <b>${fmt(lt.suggest)}</b> sahifa` : ""}\nInsha'Allah, barakali bo'lsin! 🌙`,
+      await kbFor(memberId));
+  }
+  await send(adminUid, `✅ <b>${esc(m.name)}</b> uchun yillik reja: <b>${fmt(juz)}</b> juz`);
+  return act(`as:${memberId}`, adminUid, "");
+}
+
+async function setMonth(adminUid: number, memberId: number, juz: number | null) {
+  const m = await memberInCircle(adminUid, memberId);
+  if (!m) return send(adminUid, "A'zo topilmadi.");
+  const key = day().slice(0, 7);
+  if (juz === null) {
+    await sb.from("month_goals").delete().eq("tg_id", memberId).eq("month", key);
+  } else {
+    await sb.from("month_goals").upsert({ tg_id: memberId, month: key, pages: juz * JUZ }, { onConflict: "tg_id,month" });
+  }
+  const lt = await longTerm(memberId);
+  if (memberId !== adminUid && juz !== null) {
+    await send(memberId,
+      `🗓 Shu oy uchun maqsad: <b>${fmt(juz)}</b> juz (${fmt(juz * JUZ)} sahifa).` +
+      `${lt.suggest ? `\n💡 Haftalik taxminiy: <b>${fmt(lt.suggest)}</b> sahifa` : ""}`,
+      await kbFor(memberId));
+  }
+  await send(adminUid, juz === null
+    ? `♻️ <b>${esc(m.name)}</b>: oylik maqsad avtomatik hisobga qaytdi`
+    : `✅ <b>${esc(m.name)}</b>: shu oy <b>${fmt(juz)}</b> juz`);
+  return act(`as:${memberId}`, adminUid, "");
 }
 
 async function act(a: string, uid: number, name: string, mid?: number) {
@@ -331,7 +476,11 @@ async function act(a: string, uid: number, name: string, mid?: number) {
   if (a === "gp" && isMem) {
     const s = (await statsFor([uid], ws)).get(uid)!;
     const cur = s.goal ? `Joriy maqsad: <b>${fmt(s.goal)}</b> sahifa.\n\n` : "";
-    return send(uid, `🎯 ${cur}Bu hafta necha sahifa yodlamoqchisiz?\n(Yo'naltiruvchiga yuboriladi)`, numKb("q", "m"));
+    const lt = await longTerm(uid);
+    const kb = numKb("q", "m");
+    if (lt.suggest) kb.inline_keyboard.unshift([{ text: `💡 Tavsiya: ${fmt(lt.suggest)} sahifa`, callback_data: `q:${lt.suggest}` }]);
+    const x = ltLines(lt).trim();
+    return send(uid, `🎯 ${cur}${x ? x + "\n\n" : ""}Bu hafta necha sahifa yodlamoqchisiz?\n(Yo'naltiruvchiga yuboriladi)`, kb);
   }
   if (a.startsWith("q:") && isMem) {
     const v = a.slice(2);
@@ -346,7 +495,9 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     const s = (await statsFor([uid], ws)).get(uid)!;
     const { data: all } = await sb.from("reports").select("pages").eq("tg_id", uid).eq("status", "approved");
     const total = (all ?? []).reduce((x, r) => x + Number(r.pages), 0);
-    return send(uid, statsText(mem.name, s, total), menuKb(isAdmin, true));
+    const lt = await longTerm(uid);
+    const rec = await weekRecord(uid);
+    return send(uid, statsText(mem.name, s, total, lt, rec), menuKb(isAdmin, true));
   }
 
   // ----- yo'naltiruvchi amallari -----
@@ -369,7 +520,55 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     const id = Number(a.slice(3));
     const { data: m } = await sb.from("members").select("*").eq("tg_id", id).eq("circle_id", circ.id).maybeSingle();
     if (!m) return send(uid, "A'zo topilmadi.");
-    return send(uid, `🎯 <b>${esc(m.name)}</b> bu hafta necha sahifa yodlaydi?`, numKb(`sg:${id}`, "al"));
+    const s = (await statsFor([id], ws)).get(id)!;
+    const lt = await longTerm(id);
+    const rows: unknown[][] = [];
+    if (lt.suggest) rows.push([{ text: `💡 Tavsiya: haftalik ${fmt(lt.suggest)} sahifa`, callback_data: `ss:${id}:${lt.suggest}` }]);
+    rows.push([
+      { text: "🎯 Haftalik", callback_data: `aw:${id}` },
+      { text: "📅 Oylik", callback_data: `am:${id}` },
+      { text: "🗓 Yillik", callback_data: `ay:${id}` },
+    ]);
+    rows.push([{ text: "⬅️ Orqaga", callback_data: "al" }]);
+    return send(uid,
+      `👤 <b>${esc(m.name)}</b>\n🎯 Bu hafta: ${s.goal ? `${fmt(s.approved)} / ${fmt(s.goal)}` : "reja yo'q"}${ltLines(lt)}`,
+      { inline_keyboard: rows });
+  }
+  if (a.startsWith("aw:")) {
+    const id = Number(a.slice(3));
+    return send(uid, "🎯 Bu hafta necha sahifa?", numKb(`sg:${id}`, `as:${id}`));
+  }
+  if (a.startsWith("ss:")) {
+    const [, id, v] = a.split(":");
+    return setGoal(uid, Number(id), Number(v));
+  }
+  if (a.startsWith("ay:")) {
+    const id = Number(a.slice(3));
+    return send(uid, "🗓 Yillik reja: necha juz? (1 juz = 20 sahifa)",
+      numKb(`yg:${id}`, `as:${id}`, [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30]));
+  }
+  if (a.startsWith("yg:")) {
+    const [, id, v] = a.split(":");
+    if (v === "x") {
+      await setSession(`yg:${id}`);
+      return send(uid, "Necha juz? Son yozing. Masalan: <code>10</code> yoki <code>1.5</code>");
+    }
+    return setYear(uid, Number(id), Number(v));
+  }
+  if (a.startsWith("am:")) {
+    const id = Number(a.slice(3));
+    const kb = numKb(`mg:${id}`, `as:${id}`, [0.5, 1, 1.5, 2, 2.5, 3, 4, 5]);
+    kb.inline_keyboard.splice(kb.inline_keyboard.length - 2, 0, [{ text: "♻️ Avtomatik hisob", callback_data: `mg:${id}:auto` }]);
+    return send(uid, "📅 Shu oy uchun maqsad: necha juz?\n(Odatda yillikdan avtomatik hisoblanadi, xohlasangiz o'zgartiring)", kb);
+  }
+  if (a.startsWith("mg:")) {
+    const [, id, v] = a.split(":");
+    if (v === "auto") return setMonth(uid, Number(id), null);
+    if (v === "x") {
+      await setSession(`mg:${id}`);
+      return send(uid, "Necha juz? Son yozing. Masalan: <code>1</code> yoki <code>0.5</code>");
+    }
+    return setMonth(uid, Number(id), Number(v));
   }
   if (a.startsWith("sg:")) {
     const [, id, v] = a.split(":");
@@ -434,10 +633,15 @@ async function handleText(uid: number, name: string, t: string) {
   if (!(n > 0 && n <= 100)) {
     return send(uid, "Iltimos, son yozing. Masalan: <code>2</code> yoki <code>1.5</code>");
   }
+  if ((s.state.startsWith("yg:") || s.state.startsWith("mg:")) && n > 30) {
+    return send(uid, "Juz soni 30 dan oshmasin. Masalan: <code>10</code>");
+  }
   await sb.from("sessions").delete().eq("tg_id", uid);
   if (s.state === "report") return createReport(uid, name, n);
   if (s.state === "req") return sendRequest(uid, name, n);
   if (s.state.startsWith("sg:")) return setGoal(uid, Number(s.state.slice(3)), n);
+  if (s.state.startsWith("yg:")) return setYear(uid, Number(s.state.slice(3)), n);
+  if (s.state.startsWith("mg:")) return setMonth(uid, Number(s.state.slice(3)), n);
 }
 
 async function handleMessage(msg: any) {
@@ -486,7 +690,11 @@ async function remind() {
     const noGoal: string[] = [];
     for (const m of ms ?? []) {
       const s = st.get(m.tg_id)!;
-      if (!s.goal) { noGoal.push(m.name); continue; }
+      if (!s.goal) {
+        const lt = await longTerm(m.tg_id);
+        noGoal.push(lt.suggest ? `${m.name} (tavsiya: ${fmt(lt.suggest)})` : m.name);
+        continue;
+      }
       if (s.approved + s.pending + 1e-9 < expected(s.goal)) {
         await send(m.tg_id,
           `⏰ Bu hafta qoldi: <b>${fmt(Math.max(0, s.goal - s.approved - s.pending))}</b> sahifa.\nBugun yodlagan bo'lsangiz, belgilang 👇`,
@@ -519,9 +727,10 @@ async function weekly() {
     for (const m of ms) {
       const s = st.get(m.tg_id)!;
       if (!s.goal) continue;
+      const rec = await weekRecord(m.tg_id);
       await send(m.tg_id,
         s.approved >= s.goal
-          ? `🎉 Barakalla! Bu hafta <b>${fmt(s.approved)}</b> / ${fmt(s.goal)} sahifani bajardingiz.`
+          ? `🎉 Barakalla! Bu hafta <b>${fmt(s.approved)}</b> / ${fmt(s.goal)} sahifani bajardingiz.\n🔥 Hafta seriyasi: ${rec.streak}`
           : `📊 Bu hafta: <b>${fmt(s.approved)}</b> / ${fmt(s.goal)} sahifa tasdiqlandi. Yangi haftada davom etamiz, insha'Allah 🌙`);
     }
   }
