@@ -1,4 +1,4 @@
-// Hifz Tracker: Telegram bot + sayt uchun API (bitta Supabase Edge Function)
+// Hifz Tracker: Telegram bot (tugmalar bilan) + sayt uchun API (bitta Supabase Edge Function)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const BOT = Deno.env.get("BOT_TOKEN")!;
@@ -39,7 +39,6 @@ const esc = (s: string) =>
 
 const liveStreak = (m: any) => ((m.last_date ?? "") >= day(-1) ? m.streak : 0);
 
-// maxfiy kalit: bot tokenidan o'zi yasaladi (alohida parol kerak emas)
 let _key = "";
 async function secretKey() {
   if (_key) return _key;
@@ -48,24 +47,65 @@ async function secretKey() {
   return _key;
 }
 
-async function send(chat_id: number, msg: string) {
-  await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
+async function tg(method: string, body: unknown) {
+  return await fetch(`https://api.telegram.org/bot${BOT}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id, text: msg, parse_mode: "HTML", disable_web_page_preview: true }),
+    body: JSON.stringify(body),
   });
 }
 
-// ---------- Telegram buyruqlari ----------
-async function handleMessage(msg: any) {
-  if (!msg?.text || !msg.text.startsWith("/")) return;
+async function send(chat_id: number, msg: string, reply_markup?: unknown) {
+  await tg("sendMessage", {
+    chat_id,
+    text: msg,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    reply_markup,
+  });
+}
 
-  const [raw, ...args] = msg.text.trim().split(/\s+/);
-  const cmd = raw.split("@")[0].toLowerCase();
-  const chat = msg.chat.id;
-  const uid = msg.from.id;
-  const name = msg.from.first_name ?? "Do'st";
+// ---------- tugmalar ----------
+const MENU = {
+  inline_keyboard: [
+    [{ text: "✅ Bugun yodladim", callback_data: "done" }],
+    [
+      { text: "📊 Natijam", callback_data: "me" },
+      { text: "🏆 Reyting", callback_data: "top" },
+    ],
+    [
+      { text: "🎯 Kunlik maqsad", callback_data: "goal" },
+      { text: "🌐 Sayt", callback_data: "site" },
+    ],
+  ],
+};
 
+const GOALS = {
+  inline_keyboard: [
+    [3, 5, 10].map((n) => ({ text: `${n} oyat`, callback_data: `g${n}` })),
+    [15, 20, 30].map((n) => ({ text: `${n} oyat`, callback_data: `g${n}` })),
+    [{ text: "⬅️ Orqaga", callback_data: "menu" }],
+  ],
+};
+
+// "/" bosilganda chiqadigan oddiy ro'yxat (bir marta o'rnatiladi)
+let commandsSet = false;
+async function ensureCommands() {
+  if (commandsSet) return;
+  commandsSet = true;
+  await tg("setMyCommands", {
+    commands: [
+      { command: "menyu", description: "Tugmalarni ochish" },
+      { command: "yodladim", description: "Bugun yodladim" },
+      { command: "natija", description: "Mening natijam" },
+      { command: "reyting", description: "Guruh reytingi" },
+      { command: "sayt", description: "Guruh sahifasi" },
+    ],
+  });
+}
+
+// ---------- asosiy amallar (buyruq ham, tugma ham shu yerga keladi) ----------
+async function act(a: string, chat: number, uid: number, name: string) {
   await sb.from("members").upsert(
     { chat_id: chat, tg_id: uid, name },
     { onConflict: "chat_id,tg_id" },
@@ -73,26 +113,27 @@ async function handleMessage(msg: any) {
   const { data: m } = await sb.from("members").select("*")
     .eq("chat_id", chat).eq("tg_id", uid).single();
 
-  if (cmd === "/start") {
+  if (a === "start" || a === "menu") {
+    await ensureCommands();
     return send(chat,
-      `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\n` +
-      `/reja 5 — kunlik maqsad (oyat soni)\n` +
-      `/yodladim — bugungi yodlashni belgilash\n` +
-      `/men — shaxsiy natijam\n` +
-      `/reyting — guruh reytingi\n` +
-      `/sayt — guruh sahifasi (havola)`);
+      `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\nPastdagi tugmalardan foydalaning 👇`, MENU);
   }
 
-  if (cmd === "/reja") {
-    const n = parseInt(args[0]);
-    if (!n || n < 1 || n > 100) return send(chat, "Masalan: <code>/reja 5</code> (1 dan 100 gacha)");
+  if (a === "goal") {
+    return send(chat, `🎯 <b>${esc(name)}</b>, kuniga nechta oyat yodlaysiz?`, GOALS);
+  }
+
+  if (/^g\d+$/.test(a)) {
+    const n = parseInt(a.slice(1));
     await sb.from("members").update({ daily_goal: n }).eq("chat_id", chat).eq("tg_id", uid);
-    return send(chat, `✅ ${esc(name)}, kunlik maqsad: <b>${n}</b> oyat`);
+    return send(chat, `✅ ${esc(name)}, kunlik maqsad: <b>${n} oyat</b>`, MENU);
   }
 
-  if (cmd === "/yodladim") {
+  if (a === "done") {
     const today = day();
-    if (m.last_date === today) return send(chat, `${esc(name)}, bugun allaqachon belgilagansiz ✅`);
+    if (m.last_date === today) {
+      return send(chat, `${esc(name)}, bugun allaqachon belgilagansiz ✅`, MENU);
+    }
     const streak = m.last_date === day(-1) ? m.streak + 1 : 1;
     await sb.from("members").update({
       streak,
@@ -101,19 +142,19 @@ async function handleMessage(msg: any) {
       last_date: today,
     }).eq("chat_id", chat).eq("tg_id", uid);
     await sb.from("logs").upsert({ chat_id: chat, tg_id: uid, day: today });
-    return send(chat, `🔥 Barakalla, <b>${esc(name)}</b>! Ketma-ket: <b>${streak}</b> kun`);
+    return send(chat, `🔥 Barakalla, <b>${esc(name)}</b>! Ketma-ket: <b>${streak}</b> kun`, MENU);
   }
 
-  if (cmd === "/men") {
+  if (a === "me") {
     return send(chat,
       `👤 <b>${esc(name)}</b>\n` +
-      `Kunlik maqsad: ${m.daily_goal} oyat\n` +
-      `Hozirgi streak: ${liveStreak(m)} kun 🔥\n` +
-      `Eng yaxshi streak: ${m.best_streak} kun\n` +
-      `Jami kunlar: ${m.total_days}`);
+      `🎯 Kunlik maqsad: ${m.daily_goal} oyat\n` +
+      `🔥 Ketma-ket: ${liveStreak(m)} kun\n` +
+      `🏅 Eng yaxshi: ${m.best_streak} kun\n` +
+      `📅 Jami: ${m.total_days} kun`, MENU);
   }
 
-  if (cmd === "/reyting") {
+  if (a === "top") {
     const { data } = await sb.from("members").select("*").eq("chat_id", chat);
     const top = (data ?? [])
       .map((x) => ({ ...x, s: liveStreak(x) }))
@@ -121,18 +162,37 @@ async function handleMessage(msg: any) {
       .slice(0, 10);
     const medals = ["🥇", "🥈", "🥉"];
     const lines = top.map((x, i) => `${medals[i] ?? `${i + 1}.`} ${esc(x.name)} — ${x.s} kun`);
-    return send(chat, `🏆 <b>Reyting</b>\n\n${lines.join("\n")}`);
+    return send(chat, `🏆 <b>Reyting</b>\n\n${lines.join("\n")}`, MENU);
   }
 
-  if (cmd === "/sayt") {
+  if (a === "site") {
     let { data: g } = await sb.from("groups").select("code").eq("chat_id", chat).maybeSingle();
     if (!g) {
       const code = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
       await sb.from("groups").insert({ chat_id: chat, code });
       g = { code };
     }
-    return send(chat, `🌐 Guruh sahifasi:\n${SITE}?c=${g.code}`);
+    return send(chat, `🌐 Guruh sahifasi:\n${SITE}?c=${g.code}`, MENU);
   }
+}
+
+const CMD: Record<string, string> = {
+  "/start": "start", "/menyu": "menu", "/yodladim": "done", "/natija": "me", "/men": "me",
+  "/reyting": "top", "/sayt": "site", "/reja": "goal", "/maqsad": "goal",
+};
+
+async function handleMessage(msg: any) {
+  if (!msg?.text || !msg.text.startsWith("/")) return;
+  const cmd = msg.text.trim().split(/\s+/)[0].split("@")[0].toLowerCase();
+  const a = CMD[cmd];
+  if (!a) return;
+  await act(a, msg.chat.id, msg.from.id, msg.from.first_name ?? "Do'st");
+}
+
+async function handleCallback(cq: any) {
+  await tg("answerCallbackQuery", { callback_query_id: cq.id });
+  if (!cq.message || !cq.data) return;
+  await act(cq.data, cq.message.chat.id, cq.from.id, cq.from.first_name ?? "Do'st");
 }
 
 // ---------- sayt uchun API ----------
@@ -166,7 +226,8 @@ async function remind() {
   }
   for (const [chat, list] of byChat) {
     await send(chat,
-      `⏰ Bugun hali yodlamaganlar:\n${list.map((m) => "• " + esc(m.name)).join("\n")}\n\n/yodladim ni bosishni unutmang!`);
+      `⏰ Bugun hali yodlamaganlar:\n${list.map((m) => "• " + esc(m.name)).join("\n")}\n\nPastdagi tugmani bosing 👇`,
+      MENU);
   }
 }
 
@@ -179,7 +240,7 @@ async function weekly() {
       name: m.name,
       n: (logs ?? []).filter((l) => l.chat_id === chat && l.tg_id === m.tg_id).length,
     })).sort((a, b) => b.n - a.n);
-    await send(chat, `📊 <b>Haftalik natija</b>\n\n` + rows.map((r) => `${esc(r.name)} — ${r.n}/7 kun`).join("\n"));
+    await send(chat, `📊 <b>Haftalik natija</b>\n\n` + rows.map((r) => `${esc(r.name)} — ${r.n}/7 kun`).join("\n"), MENU);
   }
 }
 
@@ -205,16 +266,11 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
   try {
-    // bir martalik sozlash: webhook ulaydi va cron SQL ni beradi
     if (path.endsWith("/setup")) {
       if (url.searchParams.get("token") !== BOT) return text("token noto'g'ri", 401);
       const k = await secretKey();
       const hook = `${SB_URL}/functions/v1/hifz-bot`;
-      const r = await fetch(`https://api.telegram.org/bot${BOT}/setWebhook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: hook, secret_token: k, drop_pending_updates: true }),
-      });
+      const r = await tg("setWebhook", { url: hook, secret_token: k, drop_pending_updates: true });
       const res = await r.json();
       return text(`Webhook: ${JSON.stringify(res)}\n\n--- SQL Editor'da Run qiling ---\n\n${cronSql(hook, k)}`);
     }
@@ -234,7 +290,8 @@ Deno.serve(async (req) => {
         return text("unauthorized", 401);
       }
       const update = await req.json();
-      await handleMessage(update.message);
+      if (update.callback_query) await handleCallback(update.callback_query);
+      else await handleMessage(update.message);
       return text("ok");
     }
 
