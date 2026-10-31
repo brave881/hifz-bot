@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const BOT = Deno.env.get("BOT_TOKEN")!;
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const TZ = 5; // Toshkent UTC+5
-const SITE = Deno.env.get("SITE_URL") ?? "https://hifz-bot.vercel.app/";
+const SITE = (Deno.env.get("SITE_URL") ?? "https://hifz-bot.vercel.app/").replace(/\/?$/, "/");
 
 function serviceKey(): string {
   const legacy = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -93,6 +93,12 @@ async function ensureCommands() {
   commandsSet = true;
   await tg("setMyCommands", { commands: [{ command: "menyu", description: "Tugmalarni ochish" }] });
   await tg("setChatMenuButton", { menu_button: { type: "web_app", text: "🌐 Sayt", web_app: { url: SITE } } });
+  if (ADMIN_ID) {
+    await tg("setChatMenuButton", {
+      chat_id: ADMIN_ID,
+      menu_button: { type: "web_app", text: "👑 Panel", web_app: { url: SITE + "admin/" } },
+    });
+  }
 }
 
 // ---------- ma'lumotlar ----------
@@ -242,7 +248,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
     ]);
   }
   if (isMem || isAdmin) rows.push([{ text: "🏆 Reyting", callback_data: "top:w" }]);
-  if (isMem && !isAdmin) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
+  if (isMem) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
   if (isAdmin) {
     rows.push([{ text: `⏳ Tekshirish${pending ? ` (${pending})` : ""}`, callback_data: "ap" }]);
     rows.push([
@@ -251,7 +257,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
     ]);
     rows.push([
       { text: "🔗 Taklif havolasi", callback_data: "inv" },
-      { text: "🌐 Sayt", web_app: { url: SITE } },
+      { text: "👑 Panel", web_app: { url: SITE + "admin/" } },
     ]);
     if (!isMem) rows.push([{ text: "➕ Men ham a'zoman", callback_data: "join" }]);
   }
@@ -513,7 +519,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "site") {
     if (!circ) return;
-    return send(uid, "🌐 Saytni ochish 👇", { inline_keyboard: [[{ text: "🌐 Sayt", web_app: { url: SITE } }]] });
+    return send(uid, "👑 Panelni ochish 👇", { inline_keyboard: [[{ text: "👑 Panel", web_app: { url: SITE + "admin/" } }]] });
   }
 
   if (a === "join") {
