@@ -97,10 +97,11 @@ function render(d) {
 
   if (!ms.length) return app.append(el("div", "msg", "Hali a'zolar yo'q."));
 
-  ms.forEach(m => {
+  const medals = ["🥇", "🥈", "🥉"];
+  ms.forEach((m, i) => {
     const card = el("div", "m");
     const top = el("div", "top");
-    top.append(el("div", "name", m.name),
+    top.append(el("div", "name", (medals[i] || (i + 1) + ".") + " " + m.name),
       el("div", "num", m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q"));
     card.append(top);
     if (m.goal) {

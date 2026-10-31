@@ -220,6 +220,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
       { text: "🎯 Haftalik maqsad", callback_data: "gp" },
     ]);
   }
+  if (isMem || isAdmin) rows.push([{ text: "🏆 Reyting", callback_data: "top:w" }]);
   if (isAdmin) {
     rows.push([{ text: `⏳ Tekshirish${pending ? ` (${pending})` : ""}`, callback_data: "ap" }]);
     rows.push([
@@ -420,6 +421,49 @@ async function setMonth(adminUid: number, memberId: number, juz: number | null) 
   return act(`as:${memberId}`, adminUid, "");
 }
 
+const MEDALS = ["🥇", "🥈", "🥉"];
+
+async function rankingText(circId: number, scope: string) {
+  const { data: ms } = await sb.from("members").select("*").eq("circle_id", circId);
+  const list = ms ?? [];
+  type Row = { name: string; goal: number; done: number };
+  const rows: Row[] = [];
+  const none: string[] = [];
+  let title = "";
+  if (scope === "w") {
+    title = `Hafta (${weekStart()})`;
+    const st = await statsFor(list.map((m) => m.tg_id), weekStart());
+    for (const m of list) {
+      const s = st.get(m.tg_id)!;
+      if (s.goal) rows.push({ name: m.name, goal: s.goal, done: s.approved }); else none.push(m.name);
+    }
+  } else {
+    for (const m of list) {
+      const lt = await longTerm(m.tg_id);
+      const t = scope === "m"
+        ? (lt.month ? { goal: lt.month.target, done: lt.month.approved } : null)
+        : (lt.plan ? { goal: lt.plan.pages, done: lt.plan.approved } : null);
+      if (t && t.goal > 0) rows.push({ name: m.name, ...t }); else none.push(m.name);
+    }
+    title = scope === "m" ? `Oy (${MONTHS[Number(day().slice(5, 7)) - 1]})` : "Yil";
+  }
+  rows.sort((a, b) => b.done / b.goal - a.done / a.goal || b.done - a.done);
+  const lines = rows.map((r, i) =>
+    `${MEDALS[i] ?? `${i + 1}.`} ${esc(r.name)} — <b>${Math.round((r.done / r.goal) * 100)}%</b> (${fmt(r.done)}/${fmt(r.goal)})${r.done + 1e-9 >= r.goal ? " 🎉" : ""}`);
+  let out = `🏆 <b>Reyting: ${title}</b>\n(maqsadga nisbatan)\n\n` + (lines.length ? lines.join("\n") : "Hali reja belgilanmagan.");
+  if (none.length) out += `\n\nReja yo'q: ${none.map(esc).join(", ")}`;
+  return out;
+}
+
+const rankKb = (scope: string) => ({
+  inline_keyboard: [
+    [["w", "📅 Hafta"], ["m", "🗓 Oy"], ["y", "📆 Yil"]].map(([k, l]) => ({
+      text: (k === scope ? "• " : "") + l, callback_data: `top:${k}`,
+    })),
+    [{ text: "⬅️ Menyu", callback_data: "m" }],
+  ],
+});
+
 async function act(a: string, uid: number, name: string, mid?: number) {
   const circ = await circleOfAdmin(uid);
   const mem = await memberOf(uid);
@@ -458,6 +502,15 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     if (!circ) return;
     await sb.from("members").upsert({ tg_id: uid, circle_id: circ.id, name }, { onConflict: "tg_id" });
     return showMenu(uid, name, "✅ Siz endi a'zosiz ham.");
+  }
+
+  if (a.startsWith("top:")) {
+    const c = circ ?? (mem ? await circleById(mem.circle_id) : null);
+    if (!c) return showMenu(uid, name);
+    const scope = a.slice(4);
+    const t = await rankingText(c.id, scope);
+    if (mid) return edit(uid, mid, t, rankKb(scope));
+    return send(uid, t, rankKb(scope));
   }
 
   // ----- a'zo amallari -----
