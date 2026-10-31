@@ -96,12 +96,11 @@ async function membersView() {
     h("div", { class: "row" }, h("b", {}, "Shu hafta"), h("span", { class: "num" }, sumGoal ? fmt(sumApp) + " / " + fmt(sumGoal) : "—")),
     sumGoal ? bar(sumApp, 0, sumGoal) : null,
     h("div", { class: "actions", style: "margin:10px 0 0" },
-      h("button", { class: "btn", onclick: inviteFlow }, "🔗 Taklif"),
       h("button", { class: "btn", onclick: () => copyOrShow("📈 Hafta hisoboti (" + d.week_start + ")\n\n" + lines.join("\n") + "\n\nJami tasdiqlangan: " + fmt(sumApp) + " sahifa") }, "📋 Hisobot"))));
   root.append(h("div", { class: "seg wrap" }, FILTERS.map(([k, l]) =>
     h("button", { class: k === (S.filter || "all") ? "on" : "", onclick: () => { S.filter = k; render(); } }, l))));
   const list = d.members.filter(m => (S.filter || "all") === "all" || statusOf(m) === S.filter);
-  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. «🔗 Taklif» ni bosib havolani yuboring."));
+  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. Botga /taklif deb yozing — havola chiqadi."));
   else if (!list.length) root.append(h("div", { class: "msg" }, "Bu bo'limda hech kim yo'q."));
   list.forEach(m => {
     const c = h("div", { class: "card tap", onclick: () => memberSheet(m) },

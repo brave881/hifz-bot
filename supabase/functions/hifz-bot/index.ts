@@ -261,10 +261,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
       { text: "🏆 Reyting", callback_data: "top:w" },
     ]);
     rows.push([{ text: "🔴 Hozir kim yodlayapti", callback_data: "lv" }]);
-    rows.push([
-      { text: "🔗 Taklif", callback_data: "inv" },
-      { text: "👑 Panel", web_app: { url: SITE + "admin/" } },
-    ]);
+    rows.push([{ text: "👑 Panel", web_app: { url: SITE + "admin/" } }]);
     if (!isMem) rows.push([{ text: "➕ Men ham a'zoman", callback_data: "join" }]);
   }
   if (isMem) {
@@ -605,7 +602,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "al") {
     const { data: ms } = await sb.from("members").select("*").eq("circle_id", circ.id).order("joined_at");
-    if (!ms?.length) return send(uid, "Hali a'zolar yo'q. «🔗 Taklif havolasi» ni yuboring.", menuKb(true, isMem));
+    if (!ms?.length) return send(uid, "Hali a'zolar yo'q. Botga /taklif deb yozing — a'zolarga yuboriladigan havola chiqadi.", menuKb(true, isMem));
     const st = await statsFor(ms.map((m) => m.tg_id), ws);
     const body = ms.map((m) => lineFor(m.name, st.get(m.tg_id)!)).join("\n");
     return send(uid,
@@ -1513,6 +1510,7 @@ async function handleMessage(msg: any) {
     return act("start", uid, name);
   }
   if (t.startsWith("/menyu") || t.startsWith("/menu")) return act("menu", uid, name);
+  if (t.startsWith("/taklif")) return act("inv", uid, name);
   if (t.startsWith("/")) return;
   return handleText(uid, name, t);
 }
