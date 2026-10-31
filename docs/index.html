@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hifz Tracker</title>
+<style>
+  :root {
+    --bg: #f6f4ee; --card: #ffffff; --ink: #1d2b24; --muted: #6b7a72;
+    --green: #1f7a54; --green-soft: #dff1e8; --gold: #c8932b; --line: #e4e0d4; --empty: #e9e6db;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111a16; --card: #19251f; --ink: #eaf1ec; --muted: #8fa398;
+      --green: #3fc48a; --green-soft: #1f3a2d; --gold: #e0b052; --line: #263a30; --empty: #263a30; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; text-align: center; }
+  .stat b { display: block; font-size: 24px; color: var(--green); }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .bar { height: 10px; background: var(--empty); border-radius: 99px; overflow: hidden; margin: 6px 0 20px; }
+  .bar i { display: block; height: 100%; background: var(--green); border-radius: 99px; transition: width .4s; }
+  .barlabel { font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+  .m { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+  .top { display: flex; align-items: center; gap: 10px; }
+  .rank { width: 28px; text-align: center; font-weight: 700; color: var(--muted); }
+  .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .streak { font-weight: 700; color: var(--gold); white-space: nowrap; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--green-soft); color: var(--green); margin-left: 6px; }
+  .dots { display: flex; gap: 6px; margin: 10px 0 6px 38px; }
+  .dot { flex: 1; height: 22px; border-radius: 6px; background: var(--empty); }
+  .dot.on { background: var(--green); }
+  .dot.today { outline: 2px solid var(--gold); outline-offset: 1px; }
+  .meta { margin-left: 38px; font-size: 12px; color: var(--muted); }
+  .days { display: flex; gap: 6px; margin: 0 0 6px 38px; font-size: 10px; color: var(--muted); text-align: center; }
+  .days span { flex: 1; }
+  .msg { text-align: center; color: var(--muted); padding: 40px 10px; }
+  code { background: var(--empty); padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🌙 Hifz Tracker</h1>
+  <div class="sub" id="sub">Yuklanmoqda…</div>
+  <div id="app"></div>
+</div>
+
+<script>
+const API = "https://fsmfhyustigomtvtnevo.supabase.co/functions/v1/hifz-bot/api";
+const WD = ["Ya", "Du", "Se", "Ch", "Pa", "Ju", "Sh"];
+const code = new URLSearchParams(location.search).get("c");
+const app = document.getElementById("app");
+const sub = document.getElementById("sub");
+
+function el(tag, cls, txt) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (txt !== undefined) e.textContent = txt;
+  return e;
+}
+
+function message(html) {
+  app.replaceChildren();
+  const d = el("div", "msg");
+  d.innerHTML = html;
+  app.append(d);
+}
+
+async function load() {
+  if (!code) {
+    sub.textContent = "";
+    return message("Havola to'liq emas.<br>Telegram guruhda <code>/sayt</code> deb yozing, bot to'g'ri havolani beradi.");
+  }
+  try {
+    const r = await fetch(API + "?c=" + encodeURIComponent(code));
+    if (r.status === 404) return message("Guruh topilmadi. Guruhda <code>/sayt</code> yozib yangi havola oling.");
+    if (!r.ok) throw new Error();
+    render(await r.json());
+  } catch (e) {
+    message("Ma'lumot yuklanmadi. Birozdan keyin qayta urinib ko'ring.");
+  }
+}
+
+function render(d) {
+  const ms = d.members;
+  const doneToday = ms.filter(m => m.today).length;
+  const totalDays = ms.reduce((s, m) => s + m.total, 0);
+  const pct = ms.length ? Math.round(doneToday / ms.length * 100) : 0;
+
+  sub.textContent = "Bugun: " + d.today;
+  app.replaceChildren();
+
+  const stats = el("div", "stats");
+  [[ms.length, "a'zo"], [doneToday + "/" + ms.length, "bugun yodladi"], [totalDays, "jami kun"]].forEach(([v, l]) => {
+    const s = el("div", "stat"); s.append(el("b", "", v), el("span", "", l)); stats.append(s);
+  });
+  app.append(stats);
+
+  const lab = el("div", "barlabel"); lab.append(el("span", "", "Bugungi guruh progressi"), el("span", "", pct + "%"));
+  const bar = el("div", "bar"); const fill = el("i"); fill.style.width = pct + "%"; bar.append(fill);
+  app.append(lab, bar);
+
+  if (!ms.length) return app.append(el("div", "msg", "Hali a'zolar yo'q. Guruhda /start yozing."));
+
+  const hdr = el("div", "days");
+  d.days.forEach(x => hdr.append(el("span", "", WD[new Date(x + "T00:00:00").getDay()])));
+  app.append(hdr);
+
+  const medals = ["🥇", "🥈", "🥉"];
+  ms.forEach((m, i) => {
+    const card = el("div", "m");
+    const top = el("div", "top");
+    top.append(el("div", "rank", medals[i] || String(i + 1)));
+    const nm = el("div", "name", m.name);
+    if (m.today) nm.append(el("span", "tag", "bugun ✓"));
+    top.append(nm, el("div", "streak", "🔥 " + m.streak));
+    const dots = el("div", "dots");
+    m.marks.forEach((v, j) => {
+      dots.append(el("div", "dot" + (v ? " on" : "") + (j === 6 ? " today" : "")));
+    });
+    card.append(top, dots, el("div", "meta",
+      "Maqsad: " + m.goal + " oyat · Eng yaxshi: " + m.best + " kun · Jami: " + m.total + " kun"));
+    app.append(card);
+  });
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
