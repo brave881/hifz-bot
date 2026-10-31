@@ -181,7 +181,8 @@ async function liveView() {
     root.append(h("div", { class: "sec" }, "⏹ So'nggi tugatganlar"));
     d.done.slice(0, 12).forEach(x => root.append(h("div", { class: "card" },
       h("div", { class: "row" }, h("b", {}, x.name), h("span", { class: "meta" }, x.started + "–" + x.ended)),
-      x.range ? h("div", { class: "meta" }, "📖 " + x.range + (x.pages ? " · ≈ " + fmt(x.pages) + " sahifa" : "")) : null)));
+      x.range ? h("div", { class: "meta" }, "📖 " + x.range + (x.pages ? " · ≈ " + fmt(x.pages) + " sahifa" : "")) : null,
+      x.voice && S.me && S.me.isAdmin ? h("div", { style: "margin-top:8px" }, voiceBtn(x.id)) : null)));
   }
   root.append(h("div", { class: "meta" }, h("button", { class: "btn", onclick: render }, "🔄 Yangilash")));
   return root;
@@ -247,4 +248,30 @@ function monthPlanSheet(m) {
         } }, "Saqlash")));
       return w;
     }) });
+}
+
+// ---- ovozni tinglash (faqat yo'naltiruvchi) ----
+let _audio = null;
+function voiceBtn(sid) {
+  const b = h("button", { class: "btn", onclick: async () => {
+    if (_audio) { _audio.pause(); _audio = null; }
+    b.textContent = "⏳ Yuklanmoqda…"; b.disabled = true;
+    try {
+      const r = await rpc("voice_get", { id: sid });
+      const bytes = Uint8Array.from(atob(r.data), c => c.charCodeAt(0));
+      const a = new Audio(URL.createObjectURL(new Blob([bytes], { type: r.type })));
+      _audio = a;
+      a.onended = () => { b.textContent = "🎧 Qayta tinglash"; };
+      a.onerror = () => voiceFallback(b, sid);
+      await a.play();
+      b.textContent = "⏸ To'xtatish"; b.disabled = false;
+      b.onclick = () => { if (a.paused) { a.play(); b.textContent = "⏸ To'xtatish"; } else { a.pause(); b.textContent = "▶️ Davom"; } };
+    } catch (e) { voiceFallback(b, sid); }
+  } }, "🎧 Ovozni tinglash");
+  return b;
+}
+async function voiceFallback(b, sid) {
+  b.disabled = false; b.textContent = "🎧 Ovozni tinglash";
+  openSheet("🎧 Ovoz", close => h("div", {}, h("div", { class: "meta" }, "Bu qurilmada ovozni saytda ijro etib bo'lmadi. Telegramning o'zida eshiting:"),
+    h("button", { class: "btn primary wide", onclick: async () => { try { await rpc("voice_send", { id: sid }); toast("📨 Botga yuborildi"); close(); } catch (e) { toast("Xato: " + e.message); } } }, "📨 Botga yuborish")));
 }

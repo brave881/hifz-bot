@@ -78,6 +78,7 @@ async function pendingView() {
   d.items.forEach(r => root.append(h("div", { class: "card" },
     h("div", { class: "row" }, h("b", {}, r.name), h("span", { class: "num" }, fmt(r.pages) + " sahifa")),
     h("div", { class: "meta" }, "📅 " + r.day, h("a", { href: "tg://user?id=" + r.tg_id }, "👤 profil")),
+    r.sid ? h("div", { style: "margin-top:8px" }, voiceBtn(r.sid)) : null,
     h("div", { class: "actions", style: "margin:10px 0 0" },
       h("button", { class: "btn primary", onclick: () => act("decide", { id: r.id, status: "approved" }, "✅ Tasdiqlandi") }, "✅ Tasdiqlash"),
       h("button", { class: "btn", onclick: () => act("decide", { id: r.id, status: "repeat" }, "🔁 Qayta so'raldi") }, "🔁 Qayta")))));

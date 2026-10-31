@@ -1174,6 +1174,7 @@ async function liveList(circId: number) {
     id: x.id, tg_id: x.tg_id, name: nm(x.tg_id), slot: x.slot, from: x.win_from, to: x.win_to,
     started: hm(x.started_at), ended: x.ended_at ? hm(x.ended_at) : null, day: x.ended_at ? day(0) : null,
     range: x.from_ayah ? `${label(x.from_ayah)} → ${label(x.to_ayah)}` : null, pages: x.pages ? Number(x.pages) : null,
+    voice: !!x.voice_file,
   });
   return { live: (live ?? []).map(mapS), done: (done ?? []).map(mapS) };
 }
@@ -1733,11 +1734,15 @@ async function rpc(req: Request) {
       const { data: rs } = await sb.from("reports").select("*")
         .eq("circle_id", circId).eq("status", "pending").order("created_at");
       const ids = (rs ?? []).map((r) => r.tg_id);
+      const rids = (rs ?? []).map((r) => r.id);
+      const { data: vs } = rids.length ? await sb.from("study_sessions").select("id,report_id").in("report_id", rids).not("voice_file", "is", null) : { data: [] };
+      const voiceBy = new Map((vs ?? []).map((v: any) => [v.report_id, v.id]));
       const { data: ms } = ids.length ? await sb.from("members").select("tg_id,name").in("tg_id", ids) : { data: [] };
       const names = new Map((ms ?? []).map((m: any) => [m.tg_id, m.name]));
       return json({
         items: (rs ?? []).map((r) => ({
           id: r.id, tg_id: r.tg_id, name: names.get(r.tg_id) ?? "A'zo", pages: Number(r.pages), day: r.day,
+          sid: voiceBy.get(r.id) ?? null,
         })),
       });
     }
@@ -1859,6 +1864,24 @@ async function rpc(req: Request) {
       }
       await liveFinish(uid, name, range, null, true);
       return ok();
+    }
+    case "voice_get":
+    case "voice_send": {
+      if (!admin) return forbid();
+      const { data: ss } = await sb.from("study_sessions").select("voice_file,circle_id").eq("id", Number(body.id)).maybeSingle();
+      if (!ss?.voice_file || ss.circle_id !== circId) return json({ error: "no_voice" }, 404);
+      if (body.a === "voice_send") {
+        await tg("sendVoice", { chat_id: uid, voice: ss.voice_file });
+        return ok();
+      }
+      const f = await (await tg("getFile", { file_id: ss.voice_file })).json();
+      const path = f?.result?.file_path;
+      if (!path) return json({ error: "no_voice" }, 404);
+      const buf = new Uint8Array(await (await fetch(`https://api.telegram.org/file/bot${BOT}/${path}`)).arrayBuffer());
+      if (buf.length > 8 * 1024 * 1024) return json({ error: "too_big" }, 413);
+      let bin = "";
+      for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+      return json({ data: btoa(bin), type: "audio/ogg" });
     }
     case "mist_list": {
       const target = admin && body.id ? Number(body.id) : uid;
