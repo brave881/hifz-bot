@@ -1,4 +1,4 @@
-import { afterBlock, ayahId, dayBlocks, endAfter, eta, fromId, nextBlock, pageOf, pagesIn, posEnd, startBefore, label } from "./plan.ts";
+import { splitBlocks, afterBlock, ayahId, dayBlocks, endAfter, eta, fromId, nextBlock, pageOf, pagesIn, posEnd, startBefore, label } from "./plan.ts";
 let fail = 0;
 const ok = (c: boolean, m: string) => { if (!c) { fail++; console.log("FAIL", m); } };
 ok(ayahId(1, 1) === 1 && ayahId(114, 6) === 6236, "ids");
@@ -19,5 +19,9 @@ days.forEach((d, i) => { if (d) { ok(d.from === prev + 1, "uzluksiz " + i); prev
 ok(Math.abs(tot - 8) < 0.8, "hafta jami " + tot);
 ok(eta(10, 5, "2026-01-01") === "2026-01-15" && eta(0, 0, "2026-01-01") === "2026-01-01" && eta(5, 0, "2026-01-01") === null, "eta");
 ok(startBefore(100, 1) < 100, "startBefore");
+const sp = splitBlocks(ayahId(78, 1), 15, 26, 1);
+let sp_tot = 0, sp_prev = ayahId(78, 1) - 1;
+sp.forEach((d, i) => { if (d) { ok(d.from === sp_prev + 1, "split uzluksiz " + i); sp_prev = d.to; sp_tot += d.pages; } });
+ok(Math.abs(sp_tot - 15) < 0.7, "split jami " + sp_tot + " blok=" + sp.filter(Boolean).length);
 console.log(days.map((d) => d ? `${label(d.from)}→${label(d.to)} (${d.pages.toFixed(2)})` : "-").join("\n"));
 console.log(fail ? "FAILED " + fail : "ALL OK");

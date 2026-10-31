@@ -72,13 +72,13 @@ export function afterBlock(b: Block, dir: Dir): number | null {
   return p < 1 || p > TOTAL ? null : p;
 }
 
-// haftalik yo'lak: hafta boshidagi ptr va maqsad G bet. Kun i (0..5) oxirigacha kumulyativ G*(i+1)/6 bet
-export function dayBlocks(weekPtr: number, goal: number, dir: Dir): (Block | null)[] {
+// total bet n ta kunga teng bo'linadi: kun i oxirigacha kumulyativ total*(i+1)/n bet (chegaralar uzluksiz)
+export function splitBlocks(startPtr: number, total: number, n: number, dir: Dir): (Block | null)[] {
   const out: (Block | null)[] = [];
-  let ptr: number | null = weekPtr;
+  let ptr: number | null = startPtr;
   let done = 0;
-  for (let i = 0; i < 6; i++) {
-    const want = goal * (i + 1) / 6 - done;
+  for (let i = 0; i < n; i++) {
+    const want = total * (i + 1) / n - done;
     if (ptr === null || want <= 0.01) { out.push(null); continue; }
     const b = nextBlock(ptr, want, dir);
     if (!b) { out.push(null); continue; }
@@ -88,6 +88,8 @@ export function dayBlocks(weekPtr: number, goal: number, dir: Dir): (Block | nul
   }
   return out;
 }
+// haftalik yo'lak: kun i (0..5) oxirigacha kumulyativ G*(i+1)/6 bet
+export const dayBlocks = (weekPtr: number, goal: number, dir: Dir) => splitBlocks(weekPtr, goal, 6, dir);
 export function weekBlock(weekPtr: number, goal: number, dir: Dir): Block | null {
   return nextBlock(weekPtr, goal, dir);
 }

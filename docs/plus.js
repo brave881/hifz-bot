@@ -32,11 +32,33 @@ function planCard(pi, opts = {}) {
     return root;
   }
   const dir = pi.dir === 1 ? "oldinga ➡️" : "orqaga ⬅️";
-  root.append(h("div", { class: "card" },
+  if (!pi.monthPlan) root.append(h("div", { class: "card" },
     h("div", { class: "row" }, h("b", {}, "📍 Joriy holat"), h("span", { class: "meta" }, dir)),
     h("div", { class: "row" }, h("span", {}, "✅ Oxirgi yodlangan"), h("b", {}, pi.last || "—")),
     h("div", { class: "row" }, h("span", {}, "➡️ Keyingi"), h("b", {}, pi.next)),
     h("div", { class: "meta" }, "Boshlangan: " + pi.start)));
+  if (pi.monthPlan) {
+    const m = pi.monthPlan;
+    root.append(h("div", { class: "card" },
+      h("div", { class: "row" }, h("b", {}, "🗓 Oylik reja"), h("span", { class: "num" }, fmt(m.done) + " / " + fmt(m.pages))),
+      bar(m.done, 0, m.pages, m.planned),
+      h("div", { class: "meta" }, h("span", {}, m.daysCount + " kun · boshlanish: " + m.start + " (" + (m.dir === -1 ? "orqaga" : "oldinga") + ")"),
+        h("span", { class: m.behind > 0.05 ? "warn" : "ok" }, m.behind > 0.05 ? "⚠️ Orqada: " + (Math.round(m.behind * 10) / 10) + " bet" : "👍 Reja bo'yicha"))));
+    if (pi.restDay) root.append(h("div", { class: "banner" }, "🏖 Bugun dam olish kuni"));
+    else if (pi.todayDone) root.append(h("div", { class: "banner" }, "🌟 Bugungi reja bajarilgan!"));
+    if (pi.today) {
+      const t = h("div", { class: "card live" }, h("b", {}, "📌 Bugun"),
+        h("div", {}, pi.today.from + " → " + pi.today.to),
+        h("div", { class: "meta" }, "≈ " + (Math.round(pi.today.pages * 10) / 10) + " bet"));
+      if (pi.todayRef && !opts.noText) t.append(arabicBox(pi.todayRef.from, pi.todayRef.to));
+      root.append(t);
+    }
+    const tb = h("div", { class: "card" }, h("b", {}, "🗓 Kunlar bo'yicha"));
+    (pi.days || []).forEach(d => { if (d.pages > 0) tb.append(h("div", { class: "row day" + (d.today ? " now" : "") + (d.past ? " past" : "") },
+      h("span", {}, (d.today ? "👉 " : "") + d.day), h("span", { class: "rng" }, d.from + " → " + d.to))); });
+    root.append(tb);
+    return root;
+  }
   if (pi.goal) {
     const c = h("div", { class: "card" },
       h("div", { class: "row" }, h("b", {}, "🎯 Hafta"), h("span", { class: "num" }, fmt(pi.done) + " / " + fmt(pi.goal))),
@@ -200,4 +222,26 @@ async function mistakesView() {
   root.append(h("div", { class: "actions" }, h("button", { class: "btn primary", onclick: () => mistakeSheet(null, render) }, "⚠️ Xato belgilash")));
   root.append(await mistakesList(null, true, render));
   return root;
+}
+
+function monthPlanSheet(m) {
+  numberSheet({ title: "🗓 " + m.name + ": shu oy necha sahifa?", nums: [5, 10, 15, 20, 25, 30, 40, 60], max: 600,
+    hint: "Keyingi qadamda boshlanish nuqtasini kiritasiz; reja kunlarga bo'linadi.",
+    onPick: pages => openSheet("📍 Qayerdan boshlanadi?", close => {
+      const w = h("div");
+      const send = async p => { close(); await act("monthplan_set", { id: m.id, pages, ...p }, "✅ Oylik reja belgilandi"); };
+      const s = h("input", { type: "number", inputmode: "numeric", min: "1", max: "114", placeholder: "Sura (1–114)" });
+      const a = h("input", { type: "number", inputmode: "numeric", min: "1", placeholder: "Oyat" });
+      const pg = h("input", { type: "number", inputmode: "numeric", min: "1", max: "604", placeholder: "yoki bet (1–604)" });
+      const dsel = h("select", {}, h("option", { value: "1" }, "Oldinga ➡️"), h("option", { value: "-1" }, "Orqaga ⬅️"));
+      w.append(h("button", { class: "btn wide", onclick: () => send({ cont: true }) }, "➡️ A'zoning oxirgi nuqtasidan davom"),
+        h("div", { class: "sec" }, "Yoki o'zingiz kiriting"),
+        h("div", { class: "custom" }, s, a), h("div", { class: "custom", style: "margin-top:8px" }, pg),
+        h("div", { class: "custom", style: "margin-top:8px" }, dsel, h("button", { class: "btn primary", onclick: () => {
+          if (pg.value) return send({ page: Number(pg.value), dir: Number(dsel.value) });
+          if (!s.value) return toast("Sura yoki betni yozing");
+          send({ s: Number(s.value), ay: Number(a.value || 1), dir: Number(dsel.value) });
+        } }, "Saqlash")));
+      return w;
+    }) });
 }

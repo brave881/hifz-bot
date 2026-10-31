@@ -1,7 +1,7 @@
 // Hifz Tracker v3: yo'naltiruvchi (admin) tasdiqlaydigan haftalik reja tizimi
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PAGE_FIRST, SURAH_AYAHS } from "./quran-data.ts";
-import { ayahId, dayBlocks, fromId, eta as etaDate, label, nextBlock, pagesIn, TOTAL, validSA, weekBlock, type Dir } from "./plan.ts";
+import { ayahId, dayBlocks, fromId, splitBlocks, eta as etaDate, label, nextBlock, pagesIn, TOTAL, validSA, weekBlock, type Dir } from "./plan.ts";
 
 const BOT = Deno.env.get("BOT_TOKEN")!;
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -143,6 +143,17 @@ async function statsFor(ids: number[], ws: string): Promise<Map<number, St>> {
     const s = map.get(r.tg_id)!;
     if (r.status === "approved") s.approved += Number(r.pages);
     if (r.status === "pending") s.pending += Number(r.pages);
+  }
+  if (ws === weekStart()) {
+    const need = ids.filter((id) => !map.get(id)!.goal);
+    if (need.length) {
+      const { data: mps } = await sb.from("month_plans").select("tg_id,pages,from_date").eq("month", day().slice(0, 7)).in("tg_id", need);
+      for (const mp of mps ?? []) {
+        const dates = planDates(mp.from_date);
+        const inWeek = dates.filter((d) => d >= ws && d <= addDays(ws, 5)).length;
+        if (inWeek) map.get(mp.tg_id)!.goal = ceilHalf((Number(mp.pages) * inWeek) / dates.length);
+      }
+    }
   }
   return map;
 }
@@ -352,14 +363,14 @@ async function planSnapshot(uid: number) {
   const L: string[] = [];
   L.push(s.goal ? `📅 Kunlik: ~${fmt(s.goal / 6)} sahifa` : "📅 Kunlik: belgilanmagan");
   L.push(s.goal ? `🎯 Haftalik: ${fmt(s.goal)} sahifa` : "🎯 Haftalik: belgilanmagan");
-  L.push(lt.month ? `🗓 Oylik (${lt.month.name}): ${fmt(lt.month.target / JUZ)} juz (${fmt(lt.month.target)} sahifa)` : "🗓 Oylik: belgilanmagan");
+  L.push(lt.month ? `🗓 Oylik (${lt.month.name}): ${fmt(lt.month.target)} sahifa` : "🗓 Oylik: belgilanmagan");
   if (lt.plan) L.push(`📆 Yillik: ${fmt(lt.plan.juz)} juz`);
   return L.join("\n");
 }
 const REQ_NAME: Record<string, string> = { d: "kunlik", w: "haftalik", m: "oylik" };
 const reqText = (v: number, kind: string) =>
   kind === "d" ? `kuniga <b>${fmt(v)}</b> sahifa (haftasiga ${fmt(v * 6)})`
-    : kind === "m" ? `shu oy <b>${fmt(v)}</b> juz (${fmt(v * JUZ)} sahifa)`
+    : kind === "m" ? `shu oy <b>${fmt(v)}</b> sahifa`
     : `bu hafta <b>${fmt(v)}</b> sahifa`;
 
 async function sendRequest(uid: number, name: string, v: number, kind = "w", quiet = false) {
@@ -593,10 +604,10 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     const k = a.slice(3);
     const lt = await longTerm(uid);
     const kb = k === "d" ? numKb("qd", "gp", [0.5, 1, 1.5, 2, 2.5, 3, 4])
-      : k === "m" ? numKb("qm", "gp", [0.5, 1, 1.5, 2, 2.5, 3, 4, 5])
+      : k === "m" ? numKb("qm", "gp", [5, 10, 15, 20, 25, 30, 40, 60])
       : numKb("q", "gp");
     if (k === "w" && lt.suggest) kb.inline_keyboard.unshift([{ text: `💡 Tavsiya: ${fmt(lt.suggest)} sahifa`, callback_data: `q:${lt.suggest}` }]);
-    const q = k === "d" ? "Kuniga necha sahifa yodlamoqchisiz?" : k === "m" ? "Shu oy necha juz yodlamoqchisiz? (1 juz = 20 sahifa)" : "Bu hafta necha sahifa yodlamoqchisiz?";
+    const q = k === "d" ? "Kuniga necha sahifa yodlamoqchisiz?" : k === "m" ? "Shu oy necha sahifa yodlamoqchisiz? (yo'naltiruvchi qayerdan boshlashni kiritadi)" : "Bu hafta necha sahifa yodlamoqchisiz?";
     return send(uid, `${q}\n(Yo'naltiruvchiga yuboriladi)`, kb);
   }
   for (const [pre, kind] of [["q:", "w"], ["qd:", "d"], ["qm:", "m"]] as const) {
@@ -604,7 +615,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       const v = a.slice(pre.length);
       if (v === "x") {
         await setSession("req:" + kind);
-        return send(uid, kind === "m" ? "Necha juz? Son yozing. Masalan: <code>1</code> yoki <code>0.5</code>" : "Necha sahifa? Son yozing. Masalan: <code>3</code>");
+        return send(uid, "Necha sahifa? Son yozing. Masalan: <code>15</code>");
       }
       return sendRequest(uid, name, Number(v), kind);
     }
@@ -645,8 +656,8 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     if (lt.suggest) rows.push([{ text: `💡 Tavsiya: haftalik ${fmt(lt.suggest)} sahifa`, callback_data: `ss:${id}:${lt.suggest}` }]);
     rows.push([
       { text: "🎯 Haftalik", callback_data: `aw:${id}` },
-      { text: "📅 Oylik", callback_data: `am:${id}` },
-      { text: "🗓 Yillik", callback_data: `ay:${id}` },
+      { text: "🗓 Oylik reja", callback_data: `mp:${id}` },
+      { text: "📆 Yillik", callback_data: `ay:${id}` },
     ]);
     rows.push([
       { text: "🗺 Reja", callback_data: `ap:${id}` },
@@ -708,8 +719,8 @@ async function act(a: string, uid: number, name: string, mid?: number) {
   }
   if (a.startsWith("gm:")) {
     const [, id, v] = a.split(":");
-    if (mid) await edit(uid, mid, "✅ Qabul qilindi (oylik)");
-    return setMonth(uid, Number(id), Number(v), true);
+    if (mid) await edit(uid, mid, "✅ Oylik so'rov qabul qilindi — boshlanish nuqtasini kiriting");
+    return askMonthStart(uid, Number(id), Number(v));
   }
   if (a.startsWith("ga:")) {
     const [, id, v] = a.split(":");
@@ -746,6 +757,74 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       `📈 <b>Hafta hisoboti</b> (${ws})\n\n${ms.map((m) => lineFor(m.name, st.get(m.tg_id)!)).join("\n")}\n\nJami tasdiqlangan: <b>${fmt(total)}</b> sahifa`,
       menuKb(true, isMem));
   }
+}
+
+// ---------- v10: oylik reja (admin kiritadi, kunlarga bo'linadi) ----------
+// reja belgilangan kundan oy oxirigacha, yakshanbasiz (dam olish)
+function planDates(fromDate: string): string[] {
+  const out: string[] = [];
+  const end = monthEnd(fromDate);
+  for (let d = fromDate; d <= end; d = addDays(d, 1)) {
+    if (new Date(d + "T00:00:00Z").getUTCDay() !== 0) out.push(d);
+  }
+  return out.length ? out : [end];
+}
+const WD = ["Yak", "Du", "Se", "Chor", "Pay", "Ju", "Sha"];
+const dmy = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)} ${WD[new Date(d + "T00:00:00Z").getUTCDay()]}`;
+
+async function monthPlan(uid: number) {
+  const { data: mp } = await sb.from("month_plans").select("*").eq("tg_id", uid).eq("month", day().slice(0, 7)).maybeSingle();
+  if (!mp) return null;
+  const dir = (mp.dir === -1 ? -1 : 1) as Dir;
+  const dates = planDates(mp.from_date);
+  const total = Number(mp.pages);
+  const blocks = splitBlocks(mp.start_ayah, total, dates.length, dir);
+  const t = day();
+  const days = dates.map((d, i) => {
+    const b = blocks[i];
+    return {
+      date: d, label: dmy(d), from: b ? label(b.from) : "—", to: b ? label(b.to) : "—", pages: b ? b.pages : 0,
+      fromId: b?.from ?? 0, toId: b?.to ?? 0, today: d === t, past: d < t,
+    };
+  });
+  const { data: rs } = await sb.from("reports").select("pages,status").eq("tg_id", uid)
+    .gte("day", mp.from_date).lte("day", monthEnd(mp.from_date)).in("status", ["approved", "pending"]);
+  const done = (rs ?? []).reduce((x, r) => x + Number(r.pages), 0);
+  const planned = days.filter((d) => d.date <= t).reduce((x, d) => x + d.pages, 0);
+  return { pages: total, start: label(mp.start_ayah), dir: mp.dir as number, fromDate: mp.from_date, days, done, planned, behind: Math.max(0, planned - done) };
+}
+
+async function setMonthPlan(adminUid: number, memberId: number, pages: number, startId: number, dir: number) {
+  const m = await memberInCircle(adminUid, memberId);
+  if (!m) return send(adminUid, "A'zo topilmadi.");
+  const key = day().slice(0, 7);
+  await sb.from("month_plans").upsert({ tg_id: memberId, month: key, pages, start_ayah: startId, dir: dir === -1 ? -1 : 1, from_date: day(), set_by: adminUid });
+  await sb.from("month_goals").upsert({ tg_id: memberId, month: key, pages }, { onConflict: "tg_id,month" });
+  const dates = planDates(day());
+  const ws = weekStart();
+  const inWeek = dates.filter((d) => d >= ws && d <= addDays(ws, 5)).length;
+  if (inWeek) await sb.from("goals").upsert({ tg_id: memberId, week_start: ws, pages: ceilHalf((pages * inWeek) / dates.length) }, { onConflict: "tg_id,week_start" });
+  const mp = await monthPlan(memberId);
+  if (!mp) return;
+  const today = mp.days.find((d) => d.today);
+  const head = `🗓 <b>Oylik reja</b>: ${fmt(pages)} sahifa, ${mp.days.length} kun (yakshanba dam)\n📍 Boshlanish: ${mp.start} (${mp.dir === -1 ? "orqaga" : "oldinga"})\n⚡ Kuniga ≈ ${pageStr(pages / mp.days.length)} sahifa`;
+  const sched = mp.days.slice(0, 7).map((d) => `${d.today ? "👉" : "▫️"} ${d.label}: ${d.from} → ${d.to}`).join("\n");
+  if (memberId !== adminUid) {
+    await send(memberId,
+      `${head}\n\n${today ? `📌 Bugun: <b>${today.from} → ${today.to}</b> (≈ ${pageStr(today.pages)} bet)\n\n` : ""}Birinchi kunlar:\n${sched}\n\nTo'liq jadval: «🗺 Rejam».`,
+      menuKb(false, true)).catch(() => {});
+  }
+  await send(adminUid, `✅ <b>${esc(m.name)}</b> uchun oylik reja belgilandi.\n\n${head}\n\nA'zoga yuborildi.`, menuKb(true, !!(await memberOf(adminUid))));
+}
+
+async function askMonthStart(adminUid: number, memberId: number, pages: number) {
+  const pos = await getPos(memberId);
+  await sb.from("sessions").upsert({ tg_id: adminUid, state: "mps", data: { id: memberId, pages } });
+  const rows: unknown[][] = [];
+  if (pos) rows.push([{ text: `➡️ Oxirgi nuqtadan: ${label(pos.ptr)}`, callback_data: "mpl" }]);
+  return send(adminUid,
+    `🗓 <b>${fmt(pages)}</b> sahifa. Qayerdan boshlanadi?\nSura va oyatni yozing: <code>78 1</code>\nyoki bet raqami: <code>bet 582</code>`,
+    { inline_keyboard: [...rows, [{ text: "⬅️ Bekor", callback_data: `as:${memberId}` }]] });
 }
 
 // ---------- v9: batafsil reja, jonli yodlash, xatolar ----------
@@ -796,8 +875,10 @@ type PlanInfo = {
   goal: number; done: number; left: number;
   today?: { from: string; to: string; pages: number; fromId: number; toId: number } | null; todayDone?: boolean;
   week?: { from: string; to: string; pages: number } | null;
-  days?: { day: string; from: string; to: string; pages: number; today: boolean }[];
+  days?: { day: string; from: string; to: string; pages: number; today: boolean; past?: boolean }[];
   avgWeek: number; remainPlan?: number; eta?: string | null; planPages?: number; weekPtr?: number;
+  monthPlan?: { pages: number; start: string; dir: number; done: number; planned: number; behind: number; daysCount: number };
+  restDay?: boolean;
 };
 const DAYN = ["Du", "Se", "Ch", "Pa", "Ju", "Sh"];
 async function planInfo(uid: number): Promise<PlanInfo> {
@@ -819,6 +900,18 @@ async function planInfo(uid: number): Promise<PlanInfo> {
     info.planPages = lt.plan.pages;
     info.remainPlan = Math.max(0, lt.plan.pages - lt.plan.approved);
     info.eta = etaDate(info.remainPlan, info.avgWeek, day());
+  }
+  const mpl = await monthPlan(uid);
+  if (mpl) {
+    info.has = true; info.dir = mpl.dir === -1 ? -1 : 1; info.start = mpl.start;
+    info.monthPlan = { pages: mpl.pages, start: mpl.start, dir: mpl.dir, done: mpl.done, planned: mpl.planned, behind: mpl.behind, daysCount: mpl.days.length };
+    info.days = mpl.days.map((d) => ({ day: d.label, from: d.from, to: d.to, pages: d.pages, today: d.today, past: d.past }));
+    const td = mpl.days.find((d) => d.today);
+    if (td && td.pages > 0) {
+      if (mpl.behind <= 0.05) info.todayDone = true;
+      info.today = { from: td.from, to: td.to, pages: td.pages, fromId: td.fromId, toId: td.toId };
+    } else info.restDay = true;
+    return info;
   }
   const p = await getPos(uid);
   if (!p) return info;
@@ -850,6 +943,18 @@ async function planInfo(uid: number): Promise<PlanInfo> {
 function planText(pi: PlanInfo) {
   if (!pi.has) {
     return "🗺 <b>Rejam</b>\n\nHali boshlanish nuqtasi tanlanmagan.\nNimani, qayerdan yodlashni <b>o'zingiz</b> tanlaysiz 👇";
+  }
+  if (pi.monthPlan) {
+    const m = pi.monthPlan;
+    const L2 = [`🗺 <b>Oylik rejam</b>`, "", `🗓 ${fmt(m.pages)} sahifa, ${m.daysCount} kun · boshlanish: ${m.start} (${m.dir === -1 ? "orqaga" : "oldinga"})`,
+      `✅ Bajarildi: ${fmt(m.done)} / ${fmt(m.pages)} sahifa`];
+    L2.push(m.behind > 0.05 ? `⚠️ Rejadan orqada: ${pageStr(m.behind)} bet` : "👍 Reja bo'yicha ketyapsiz");
+    if (pi.restDay) L2.push("🏖 Bugun dam olish kuni");
+    else if (pi.todayDone) L2.push("🌟 Bugungi reja bajarilgan!");
+    if (pi.today) L2.push(`📌 Bugun: <b>${pi.today.from} → ${pi.today.to}</b> (≈ ${pageStr(pi.today.pages)} bet)`);
+    L2.push("", "🗓 Kunlar bo'yicha:");
+    for (const d of pi.days ?? []) if (d.pages > 0) L2.push(`${d.today ? "👉" : d.past ? "▪️" : "▫️"} ${d.day}: ${d.from} → ${d.to}`);
+    return L2.join("\n");
   }
   const L = [`🗺 <b>Rejam</b>`, ""];
   L.push(`📍 Boshlangan joy: ${pi.start} (${pi.dir === 1 ? "oldinga ➡️" : "orqaga ⬅️"})`);
@@ -1061,6 +1166,32 @@ async function actPlus(a: string, uid: number, name: string, mid?: number): Prom
   const mem = await memberOf(uid);
   const setS = (state: string, data: unknown = {}) => sb.from("sessions").upsert({ tg_id: uid, state, data });
 
+  if (a.startsWith("mp:") && circ) {
+    const id = Number(a.slice(3));
+    await send(uid, "🗓 Oylik reja: shu oy necha sahifa?", numKb(`mn:${id}`, `as:${id}`, [5, 10, 15, 20, 25, 30, 40, 60]));
+    return true;
+  }
+  if (a.startsWith("mn:") && circ) {
+    const [, id, v] = a.split(":");
+    if (v === "x") { await setS("mnp", { id: Number(id) }); await send(uid, "Necha sahifa? Son yozing. Masalan: <code>15</code>"); return true; }
+    await askMonthStart(uid, Number(id), Number(v));
+    return true;
+  }
+  if (a === "mpl" && circ) {
+    const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).eq("state", "mps").maybeSingle();
+    if (!s) return true;
+    const pos = await getPos(s.data.id);
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    if (pos) await setMonthPlan(uid, s.data.id, s.data.pages, pos.ptr, pos.dir);
+    return true;
+  }
+  if (a.startsWith("mpd:") && circ) {
+    const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).eq("state", "mpd").maybeSingle();
+    if (!s) return true;
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    await setMonthPlan(uid, s.data.id, s.data.pages, s.data.start, Number(a.slice(4)));
+    return true;
+  }
   if (a === "pl" && mem) { const pi = await planInfo(uid); await send(uid, planText(pi), planKb(pi)); return true; }
   if (a === "ps" && mem) {
     await send(uid, "📍 Qayerdan boshlaysiz? O'zingiz tanlang:", { inline_keyboard: [
@@ -1186,6 +1317,22 @@ async function actPlus(a: string, uid: number, name: string, mid?: number): Prom
 
 // matn / ovoz kiritish oqimlari (true — ishlov berildi)
 async function textPlus(uid: number, name: string, t: string, s: any): Promise<boolean> {
+  if (s.state === "mnp") {
+    const n = Math.round(parseFloat(t.replace(",", ".")) * 100) / 100;
+    if (!(n > 0 && n <= 600)) { await send(uid, "Son yozing. Masalan: <code>15</code>"); return true; }
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    await askMonthStart(uid, s.data.id, n);
+    return true;
+  }
+  if (s.state === "mps") {
+    const id = parseAyah(t);
+    if (!id) { await send(uid, "Tushunmadim. Masalan: <code>78 1</code> yoki <code>bet 582</code>"); return true; }
+    await sb.from("sessions").upsert({ tg_id: uid, state: "mpd", data: { ...s.data, start: id } });
+    await send(uid, `📍 ${label(id)}\nQaysi tomonga yodlanadi?`, { inline_keyboard: [[
+      { text: "➡️ Oldinga", callback_data: "mpd:1" }, { text: "⬅️ Orqaga", callback_data: "mpd:-1" },
+    ]] });
+    return true;
+  }
   if (s.state === "pos") {
     const id = parseAyah(t);
     if (!id) { await send(uid, "Tushunmadim. Masalan: <code>78 1</code> yoki <code>bet 582</code>"); return true; }
@@ -1248,7 +1395,6 @@ async function handleText(uid: number, name: string, t: string) {
   if (s.state === "report") return createReport(uid, name, n);
   if (s.state === "req" || s.state.startsWith("req:")) {
     const kind = s.state.startsWith("req:") ? s.state.slice(4) : "w";
-    if (kind === "m" && n > 30) return send(uid, "Juz soni 30 dan oshmasin.");
     return sendRequest(uid, name, n, kind);
   }
   if (s.state.startsWith("sg:")) return setGoal(uid, Number(s.state.slice(3)), n);
@@ -1477,7 +1623,7 @@ async function rpc(req: Request) {
     }
     case "request": {
       const kind = ["d", "w", "m"].includes(body.kind) ? body.kind : "w";
-      const n = numIn(kind === "m" ? body.juz ?? body.pages : body.pages, kind === "m" ? 30 : 100);
+      const n = numIn(body.pages, 100);
       if (!mem || !n) return bad();
       const old = await sendRequest(uid, name, n, kind, true);
       return json({ ok: true, old: typeof old === "string" ? old : "" });
@@ -1563,6 +1709,18 @@ async function rpc(req: Request) {
         live: await liveOf(target) ? true : false,
         slots: SLOTS,
       });
+    }
+    case "monthplan_set": {
+      if (!admin) return forbid();
+      const id = Number(body.id), n = numIn(body.pages, 600);
+      if (!id || !n || !(await memberInCircle(uid, id))) return bad();
+      let start: number | null = null, dir = Number(body.dir) === -1 ? -1 : 1;
+      if (body.cont) { const p = await getPos(id); if (p) { start = p.ptr; dir = p.dir; } }
+      else if (body.page) { const pg = Number(body.page); start = pg >= 1 && pg <= 604 ? PAGE_FIRST[pg - 1] : null; }
+      else { const su = Number(body.s), ay = Number(body.ay ?? 1); start = validSA(su, ay) ? ayahId(su, ay) : null; }
+      if (!start) return bad();
+      await setMonthPlan(uid, id, n, start, dir);
+      return ok();
     }
     case "plan_set": {
       if (!mem) return forbid();

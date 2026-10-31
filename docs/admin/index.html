@@ -30,10 +30,7 @@ function memberSheet(m) {
       "💡 Tavsiya: haftalik " + fmt(m.lt.suggest) + " sahifa"));
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🎯 " + m.name + ": bu hafta necha sahifa?", nums: NUMS,
       onPick: v => act("setgoal", { id: m.id, pages: v }, "✅ Haftalik belgilandi") }); } }, "🎯 Haftalik belgilash"));
-    w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "📅 " + m.name + ": shu oy necha juz?", nums: [0.5, 1, 1.5, 2, 2.5, 3, 4, 5], max: 30,
-      hint: "Odatda yillikdan avtomatik hisoblanadi.",
-      extras: [["♻️ Avtomatik hisob", () => act("setmonth", { id: m.id, juz: null }, "♻️ Avtomatik hisobga qaytdi")]],
-      onPick: v => act("setmonth", { id: m.id, juz: v }, "✅ Oylik belgilandi") }); } }, "📅 Oylik (juz)"));
+    w.append(h("button", { class: "btn wide", onclick: () => { close(); monthPlanSheet(m); } }, "🗓 Oylik reja (kunlarga bo'linadi)"));
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🗓 " + m.name + ": yillik necha juz?", nums: [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30], max: 30,
       hint: "1 juz = 20 sahifa. Reja 52 hafta davom etadi.",
       onPick: v => act("setyear", { id: m.id, juz: v }, "✅ Yillik reja belgilandi") }); } }, "🗓 Yillik (juz)"));

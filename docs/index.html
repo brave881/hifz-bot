@@ -19,7 +19,7 @@ const reportFlow = () => numberSheet({ title: "📖 Necha sahifa yodladingiz?", 
 
 const sendReq = async (kind, v) => {
   try {
-    const r = await rpc("request", kind === "m" ? { kind, juz: v } : { kind, pages: v });
+    const r = await rpc("request", { kind, pages: v });
     toast("📨 So'rov yuborildi");
     openSheet("📝 Sening rejang bu edi", () => h("div", {}, h("pre", { class: "old" }, r.old || ""),
       h("div", { class: "meta" }, "Yo'naltiruvchi tasdiqlaydi.")));
@@ -32,7 +32,7 @@ const goalFlow = () => openSheet("🎯 Maqsad so'rash", close => {
   w.append(h("div", { class: "meta" }, "Yo'naltiruvchiga yuboriladi, u tasdiqlaydi."));
   [["📅 Kunlik (sahifa/kun)", "d", [0.5, 1, 1.5, 2, 2.5, 3, 4], 100, null],
    ["🎯 Haftalik (sahifa)", "w", NUMS, 100, lt.suggest],
-   ["🗓 Oylik (juz)", "m", [0.5, 1, 1.5, 2, 2.5, 3, 4, 5], 30, null]].forEach(([l, k, nums, max, sug]) =>
+   ["🗓 Oylik (sahifa)", "m", [5, 10, 15, 20, 25, 30, 40, 60], 100, null]].forEach(([l, k, nums, max, sug]) =>
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: l, nums, max, suggest: sug, onPick: v => sendReq(k, v) }); } }, l)));
   return w;
 });
