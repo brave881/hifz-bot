@@ -141,3 +141,18 @@ alter table month_plans enable row level security;
 -- ===== v11: AI tahlil =====
 -- source: 'manual' (qo'lda) yoki 'ai' (ovoz tahlili); status: open | fixed | suggested (AI taklifi, admin tasdig'ini kutadi) | rejected
 alter table mistakes add column if not exists source text not null default 'manual';
+-- ===== v12: a'zoni admin qo'shadi (telefon), savat (o'chirilganlarni ko'rish/tiklash) =====
+alter table members add column if not exists phone text;
+
+create table if not exists trash (
+  id          bigserial primary key,
+  circle_id   bigint not null,
+  kind        text   not null,           -- member | report | mistake
+  label       text,
+  data        jsonb  not null,
+  deleted_by  bigint,
+  deleted_at  timestamptz not null default now(),
+  restored_at timestamptz
+);
+create index if not exists trash_circle_idx on trash (circle_id, restored_at, deleted_at desc);
+alter table trash enable row level security;

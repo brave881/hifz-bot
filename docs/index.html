@@ -41,6 +41,7 @@ async function homeView() {
     bar(d, 0, g), h("div", { class: "meta" }, v))));
   if (my.lt.suggest) root.append(h("div", { class: "tip" }, "💡 Tavsiya etilgan haftalik: " + fmt(my.lt.suggest) + " sahifa"));
 
+  root.append(h("div", { class: "actions" }, h("button", { class: "btn", onclick: writeAdminSheet }, "✉️ Yo'naltiruvchiga yozish")));
   root.append(h("div", { class: "card" },
     h("div", { class: "row" }, h("span", {}, "🏅 Hamma vaqt"), h("b", {}, fmt(my.allTime) + " sahifa")),
     h("div", { class: "row" }, h("span", {}, "🏆 Bajarilgan haftalar"), h("b", {}, String(my.rec.total))),

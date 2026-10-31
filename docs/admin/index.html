@@ -35,6 +35,9 @@ function memberSheet(m) {
     w.append(h("div", { class: "actions", style: "margin-top:8px" },
       h("button", { class: "btn", onclick: () => { close(); memberPlanSheet(m); } }, "🗺 Reja"),
       h("button", { class: "btn", onclick: () => { close(); memberMistakesSheet(m); } }, "⚠️ Xatolar")));
+    w.append(h("div", { class: "actions", style: "margin-top:8px" },
+      h("button", { class: "btn", onclick: () => { close(); memberReportsSheet(m); } }, "📖 Hisobotlar"),
+      h("button", { class: "btn", onclick: () => { close(); deleteMemberSheet(m); } }, "🗑 O'chirish")));
     return w;
   });
 }
@@ -96,17 +99,19 @@ async function membersView() {
     h("div", { class: "row" }, h("b", {}, "Shu hafta"), h("span", { class: "num" }, sumGoal ? fmt(sumApp) + " / " + fmt(sumGoal) : "—")),
     sumGoal ? bar(sumApp, 0, sumGoal) : null,
     h("div", { class: "actions", style: "margin:10px 0 0" },
+      h("button", { class: "btn primary", onclick: addMemberSheet }, "➕ A'zo qo'shish"),
       h("button", { class: "btn", onclick: () => copyOrShow("📈 Hafta hisoboti (" + d.week_start + ")\n\n" + lines.join("\n") + "\n\nJami tasdiqlangan: " + fmt(sumApp) + " sahifa") }, "📋 Hisobot"))));
   root.append(h("div", { class: "seg wrap" }, FILTERS.map(([k, l]) =>
     h("button", { class: k === (S.filter || "all") ? "on" : "", onclick: () => { S.filter = k; render(); } }, l))));
   const list = d.members.filter(m => (S.filter || "all") === "all" || statusOf(m) === S.filter);
-  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. Botga /taklif deb yozing — havola chiqadi."));
+  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. «➕ A'zo qo'shish» ni bosing."));
   else if (!list.length) root.append(h("div", { class: "msg" }, "Bu bo'limda hech kim yo'q."));
   list.forEach(m => {
     const c = h("div", { class: "card tap", onclick: () => memberSheet(m) },
       h("div", { class: "row" }, h("b", {}, m.name), h("span", { class: "num" }, m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q")));
     if (m.goal) c.append(bar(m.approved, m.pending, m.goal, m.expected));
     const info = ltInfo(m.lt).map(x => x[0] + ": " + x[1]);
+    if (m.phone) info.unshift("📞 " + m.phone);
     if (m.pending) info.unshift("⏳ " + fmt(m.pending));
     if (info.length) c.append(h("div", { class: "meta" }, info.map(t => h("span", {}, t))));
     root.append(c);
@@ -114,11 +119,11 @@ async function membersView() {
   return root;
 }
 
-const VIEWS = { pending: pendingView, members: membersView, live: liveView, rank: rankView };
+const VIEWS = { pending: pendingView, members: membersView, live: liveView, rank: rankView, trash: trashView };
 let R = 0;
 function tabs() {
   return [["pending", "⏳", "Tekshirish" + (S.me.pendingCount ? " (" + S.me.pendingCount + ")" : "")],
-    ["members", "👥", "A'zolar"], ["live", "🔴", "Hozir"], ["rank", "🏆", "Reyting"]];
+    ["members", "👥", "A'zolar"], ["live", "🔴", "Hozir"], ["rank", "🏆", "Reyting"], ["trash", "🗑", "Savat"]];
 }
 async function render() {
   const my = ++R;

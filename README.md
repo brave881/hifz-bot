@@ -17,3 +17,9 @@ Quron yodlash guruhi uchun Telegram bot + sayt.
 - **AI ovoz tahlili** (hozircha O‘CHIRILGAN, kod saqlangan; yo‘naltiruvchi ovozni o‘zi eshitadi) (ixtiyoriy): a'zo «Tugatdim» da ovozli xabar yuborsa, bot uni Groq Whisper bilan matnga o'giradi va Qur'on matni bilan so'zma-so'z solishtiradi. Tushib qolgan, almashgan, ortiqcha so'zlar yo'naltiruvchiga **taklif** sifatida boradi; u «✅ xato / ❌ xato emas» deb hal qiladi, faqat tasdiqlangani a'zoga xato bo'lib ko'rinadi. Tajvid va talaffuzni baholamaydi.
   - Yoqish: Supabase → Edge Functions → Secrets → `GROQ_API_KEY` (console.groq.com dan bepul kalit). Kalit bo'lmasa, tahlil o'chiq.
   - `schema.sql` ni qayta Run qiling (`mistakes.source` ustuni).
+
+## v12: yopiq bot, savat
+- Bot **yopiq**: taklif havolasi olib tashlandi. A'zoni faqat yo'naltiruvchi qo'shadi (Telegram ID + ism + telefon), qo'shilmaganlar botdan foydalana olmaydi (faqat o'z ID'sini ko'radi).
+- Yo'naltiruvchi a'zo, hisobot va xatolarni o'chira oladi; hammasi **Savat**da saqlanadi va tiklanadi (bot: «🗑 Savat», sayt: «Savat» bo'limi).
+- A'zo hech narsani o'zgartira olmaydi; xato qilsa «✉️ Yo'naltiruvchiga yozish» orqali xabar yuboradi.
+- Migratsiya: `supabase/migrations/005_v12.sql`.

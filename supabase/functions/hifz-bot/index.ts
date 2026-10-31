@@ -261,7 +261,10 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
       { text: "🏆 Reyting", callback_data: "top:w" },
     ]);
     rows.push([{ text: "🔴 Hozir kim yodlayapti", callback_data: "lv" }]);
-    rows.push([{ text: "👑 Panel", web_app: { url: SITE + "admin/" } }]);
+    rows.push([
+      { text: "👑 Panel", web_app: { url: SITE + "admin/" } },
+      { text: "🗑 Savat", callback_data: "tr" },
+    ]);
     if (!isMem) rows.push([{ text: "➕ Men ham a'zoman", callback_data: "join" }]);
   }
   if (isMem) {
@@ -275,6 +278,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
       { text: "🏆 Reyting", callback_data: "top:w" },
       { text: "🔴 Hozir kim?", callback_data: "lv" },
     ]);
+    if (!isAdmin) rows.push([{ text: "✉️ Yo'naltiruvchiga yozish", callback_data: "wm" }]);
     if (!isAdmin) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
   }
   return { inline_keyboard: rows };
@@ -290,7 +294,8 @@ async function showMenu(uid: number, name: string, pre?: string) {
         `Sizning Telegram ID: <code>${uid}</code>\nAdmin siz bo'lsangiz, shu raqamni Supabase → Edge Functions → Secrets ichiga <code>ADMIN_ID</code> nomi bilan yozing.`);
     }
     return send(uid,
-      `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\nHalqaga qo'shilish uchun yo'naltiruvchidan taklif havolasini so'rang.`);
+      `Assalomu alaykum, <b>${esc(name)}</b>! 🌙\n\n🔒 Bu bot yopiq: faqat yo'naltiruvchi qo'shgan a'zolar foydalana oladi.\n\n` +
+      `Qo'shilish uchun yo'naltiruvchiga <b>telefon raqamingiz</b> va <b>Telegram ID</b>ingizni yuboring:\n🆔 <code>${uid}</code>`);
   }
   let pending = 0;
   if (circ) {
@@ -545,15 +550,8 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "new") return showMenu(uid, name);
 
+  if (await actAdminPlus(a, uid, name, mid)) return;
   if (await actPlus(a, uid, name, mid)) return;
-
-  if (a === "inv") {
-    if (!circ) return;
-    const u = await botUsername();
-    return send(uid,
-      `🔗 <b>Taklif havolasi</b>\n\nShuni a'zolarga yuboring, bosganda bot ochiladi va ular halqaga qo'shiladi:\n\nhttps://t.me/${u}?start=j_${circ.join_code}`,
-      menuKb(true, isMem));
-  }
 
   if (a === "site") {
     if (!circ) return;
@@ -602,12 +600,13 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "al") {
     const { data: ms } = await sb.from("members").select("*").eq("circle_id", circ.id).order("joined_at");
-    if (!ms?.length) return send(uid, "Hali a'zolar yo'q. Botga /taklif deb yozing — a'zolarga yuboriladigan havola chiqadi.", menuKb(true, isMem));
+    if (!ms?.length) return send(uid, "Hali a'zolar yo'q.", { inline_keyboard: [[{ text: "➕ A'zo qo'shish", callback_data: "ma" }], [{ text: "⬅️ Orqaga", callback_data: "m" }]] });
     const st = await statsFor(ms.map((m) => m.tg_id), ws);
     const body = ms.map((m) => lineFor(m.name, st.get(m.tg_id)!)).join("\n");
     return send(uid,
       `👥 <b>A'zolar</b>\n\n${body}\n\nReja kiritish uchun ismni bosing 👇`,
       { inline_keyboard: [
+        [{ text: "➕ A'zo qo'shish", callback_data: "ma" }],
         ...ms.map((m) => [{ text: `👤 ${m.name}`, callback_data: `as:${m.tg_id}` }]),
         [{ text: "⬅️ Orqaga", callback_data: "m" }],
       ] });
@@ -623,10 +622,11 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       [{ text: "🗓 Oylik reja", callback_data: `mp:${id}` }],
       [{ text: "🎯 Haftalik", callback_data: `aw:${id}` }, { text: "📆 Yillik", callback_data: `ay:${id}` }],
       [{ text: "🗺 Reja", callback_data: `ap:${id}` }, { text: "⚠️ Xatolar", callback_data: `xa:${id}` }],
+      [{ text: "📖 Hisobotlar", callback_data: `rl:${id}` }, { text: "🗑 A'zoni o'chirish", callback_data: `mdc:${id}` }],
       [{ text: "⬅️ Orqaga", callback_data: "al" }],
     ];
     return send(uid,
-      `👤 <b>${esc(m.name)}</b>\n🎯 Bu hafta: ${s.goal ? `${fmt(s.approved)} / ${fmt(s.goal)}` : "reja yo'q"}${ltLines(lt)}`,
+      `👤 <b>${esc(m.name)}</b>${m.phone ? `\n📞 ${esc(m.phone)}` : ""}\n🆔 <code>${id}</code>\n🎯 Bu hafta: ${s.goal ? `${fmt(s.approved)} / ${fmt(s.goal)}` : "reja yo'q"}${ltLines(lt)}`,
       { inline_keyboard: rows });
   }
   if (a.startsWith("aw:")) {
@@ -1393,7 +1393,9 @@ async function actPlus(a: string, uid: number, name: string, mid?: number): Prom
     const id = Number(a.slice(3));
     const ms = await mistakeList(id);
     await send(uid, ms.length ? "📋 <b>Ochiq xatolar</b>\n\n" + ms.map((m) => `• ${label(m.ayah)}${m.word ? `, ${m.word}-so'z` : ""} — ${KINDS[m.kind] ?? m.kind}${m.note ? ` (${esc(m.note)})` : ""}`).join("\n") : "Ochiq xato yo'q 🎉",
-      { inline_keyboard: [[{ text: "⚠️ Xato qo'shish", callback_data: `xm:${id}` }], [{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] });
+      { inline_keyboard: [
+        ...ms.slice(0, 10).map((m) => [{ text: `🗑 ${label(m.ayah)}`, callback_data: `xd:${m.id}:${id}` }]),
+        [{ text: "⚠️ Xato qo'shish", callback_data: `xm:${id}` }], [{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] });
     return true;
   }
   if (a.startsWith("ap:") && circ) { // a'zo rejasi (admin ko'radi)
@@ -1459,20 +1461,203 @@ async function voicePlus(uid: number, name: string, fileId: string): Promise<boo
   return true;
 }
 
-// ---------- kiruvchi xabarlar ----------
-async function joinByCode(code: string, uid: number, name: string) {
-  const { data: c } = await sb.from("circles").select("*").eq("join_code", code).maybeSingle();
-  if (!c) return send(uid, "Havola noto'g'ri yoki eskirgan. Yo'naltiruvchidan yangisini so'rang.");
-  const { data: ex } = await sb.from("members").select("tg_id").eq("tg_id", uid).maybeSingle();
-  await sb.from("members").upsert({ tg_id: uid, circle_id: c.id, name }, { onConflict: "tg_id" });
-  if (!ex && c.admin_id !== uid) await send(c.admin_id, `👤 Yangi a'zo qo'shildi: <b>${esc(name)}</b>`);
-  await ensureCommands();
-  return showMenu(uid, name, `✅ Halqaga qo'shildingiz, <b>${esc(name)}</b>! 🌙`);
+// ---------- v12: a'zoni admin qo'shadi, savat, a'zo -> yo'naltiruvchi xabari ----------
+const MEMBER_TABLES = ["goals", "reports", "plans", "month_goals", "month_plans", "positions", "study_sessions", "mistakes"];
+
+async function addMember(adminUid: number, id: number, name: string, phone: string | null) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return { ok: false as const, err: "forbidden" };
+  if (!Number.isInteger(id) || id < 10000) return { ok: false as const, err: "bad_id" };
+  const { data: ex } = await sb.from("members").select("*").eq("tg_id", id).maybeSingle();
+  if (ex && ex.circle_id !== circ.id) return { ok: false as const, err: "other_circle" };
+  const row: Record<string, unknown> = { tg_id: id, circle_id: circ.id, name: name.slice(0, 60) || ex?.name || "A'zo" };
+  if (phone) row.phone = phone;
+  await sb.from("members").upsert(row, { onConflict: "tg_id" });
+  // a'zoga xabar (u botni hali ochmagan bo'lsa, yetib bormasligi mumkin)
+  send(id, `✅ Siz Hifz halqasiga qo'shildingiz! 🌙\nBoshlash uchun /start ni bosing.`).catch(() => {});
+  return { ok: true as const, existed: !!ex, name: String(row.name) };
 }
 
+async function trashPut(circId: number, kind: string, label: string, data: unknown, by: number) {
+  await sb.from("trash").insert({ circle_id: circId, kind, label, data, deleted_by: by });
+}
+
+async function deleteMember(adminUid: number, memberId: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ || memberId === adminUid) return false;
+  const { data: m } = await sb.from("members").select("*").eq("tg_id", memberId).eq("circle_id", circ.id).maybeSingle();
+  if (!m) return false;
+  const tables: Record<string, unknown[]> = {};
+  for (const t of MEMBER_TABLES) {
+    const { data } = await sb.from(t).select("*").eq("tg_id", memberId);
+    tables[t] = data ?? [];
+  }
+  await trashPut(circ.id, "member", `A'zo: ${m.name}${m.phone ? " · " + m.phone : ""}`, { member: m, tables }, adminUid);
+  for (const t of MEMBER_TABLES) await sb.from(t).delete().eq("tg_id", memberId);
+  await sb.from("sessions").delete().eq("tg_id", memberId);
+  await sb.from("members").delete().eq("tg_id", memberId);
+  return true;
+}
+
+async function deleteReport(adminUid: number, rid: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return false;
+  const { data: r } = await sb.from("reports").select("*").eq("id", rid).eq("circle_id", circ.id).maybeSingle();
+  if (!r) return false;
+  const { data: m } = await sb.from("members").select("name").eq("tg_id", r.tg_id).maybeSingle();
+  await trashPut(circ.id, "report", `Hisobot: ${m?.name ?? "A'zo"} — ${fmt(Number(r.pages))} sahifa, ${r.day}`, { row: r }, adminUid);
+  await sb.from("reports").delete().eq("id", rid);
+  return true;
+}
+
+async function deleteMistake(adminUid: number, mid: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return false;
+  const { data: x } = await sb.from("mistakes").select("*").eq("id", mid).eq("circle_id", circ.id).maybeSingle();
+  if (!x) return false;
+  const { data: m } = await sb.from("members").select("name").eq("tg_id", x.tg_id).maybeSingle();
+  await sb.from("trash").insert({ circle_id: circ.id, kind: "mistake", label: `Xato: ${m?.name ?? "A'zo"} — ${label(x.ayah)}`, data: { row: x }, deleted_by: adminUid });
+  await sb.from("mistakes").delete().eq("id", mid);
+  return true;
+}
+
+async function trashItems(circId: number) {
+  const { data } = await sb.from("trash").select("id,kind,label,deleted_at").eq("circle_id", circId).is("restored_at", null)
+    .order("deleted_at", { ascending: false }).limit(30);
+  return data ?? [];
+}
+
+async function restoreTrash(adminUid: number, tid: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return false;
+  const { data: t } = await sb.from("trash").select("*").eq("id", tid).eq("circle_id", circ.id).is("restored_at", null).maybeSingle();
+  if (!t) return false;
+  const d = t.data as any;
+  if (t.kind === "member") {
+    await sb.from("members").upsert(d.member, { onConflict: "tg_id" });
+    for (const tb of MEMBER_TABLES) if (d.tables?.[tb]?.length) await sb.from(tb).upsert(d.tables[tb]);
+  } else if (t.kind === "report") {
+    const { data: m } = await sb.from("members").select("tg_id").eq("tg_id", d.row.tg_id).maybeSingle();
+    if (!m) return false; // a'zo o'chirilgan: avval a'zoni tiklang
+    await sb.from("reports").upsert(d.row);
+  } else if (t.kind === "mistake") {
+    const { data: m } = await sb.from("members").select("tg_id").eq("tg_id", d.row.tg_id).maybeSingle();
+    if (!m) return false;
+    await sb.from("mistakes").upsert(d.row);
+  }
+  await sb.from("trash").update({ restored_at: new Date().toISOString() }).eq("id", tid);
+  return true;
+}
+
+// a'zo -> yo'naltiruvchi (xato qilsa, shu yo'l bilan aytadi)
+async function messageAdmin(uid: number, text: string) {
+  const mem = await memberOf(uid);
+  const circ = mem ? await circleById(mem.circle_id) : null;
+  if (!mem || !circ) return false;
+  await send(circ.admin_id,
+    `✉️ <b>${esc(mem.name)}</b> yozdi:\n\n${esc(text.slice(0, 1000))}\n\n<a href="tg://user?id=${uid}">👤 ${esc(mem.name)} profiliga o'tish</a>`,
+    { inline_keyboard: [[{ text: "👤 A'zo kartasi", callback_data: `as:${uid}` }]] });
+  return true;
+}
+
+// "123456789 Ali Valiyev +998901234567" -> id, ism, telefon
+function parseNewMember(t: string): { id: number; name: string; phone: string | null } | null {
+  const parts = t.trim().split(/\s+/);
+  const id = Number(parts[0]);
+  if (!/^\d{5,12}$/.test(parts[0] ?? "") || !Number.isSafeInteger(id)) return null;
+  let phone: string | null = null;
+  const rest: string[] = [];
+  for (const x of parts.slice(1)) {
+    if (!phone && /^\+?[\d()-]{9,16}$/.test(x)) phone = x; else rest.push(x);
+  }
+  return { id, name: rest.join(" "), phone };
+}
+
+async function actAdminPlus(a: string, uid: number, name: string, mid?: number): Promise<boolean> {
+  const circ = await circleOfAdmin(uid);
+  const mem = await memberOf(uid);
+  if (a === "wm" && mem) {
+    await sb.from("sessions").upsert({ tg_id: uid, state: "msg", data: {} });
+    await send(uid, "✉️ Yo'naltiruvchiga xabaringizni yozing (masalan, noto'g'ri kiritilgan narsa haqida):");
+    return true;
+  }
+  if (!circ) return false;
+  if (a === "ma") {
+    await sb.from("sessions").upsert({ tg_id: uid, state: "madd", data: {} });
+    await send(uid, "➕ <b>A'zo qo'shish</b>\n\nA'zo yuborgan ma'lumotni bitta xabarda yozing: Telegram ID, ism, telefon.\n\nMasalan:\n<code>123456789 Ali +998901234567</code>");
+    return true;
+  }
+  if (a.startsWith("mdc:")) {
+    const id = Number(a.slice(4));
+    await send(uid, "🗑 Bu a'zoni o'chiraymi? U botdan foydalana olmaydi. Ma'lumotlari «Savat»da saqlanadi, tiklash mumkin.", { inline_keyboard: [[
+      { text: "🗑 Ha, o'chirish", callback_data: `mdd:${id}` }, { text: "Bekor", callback_data: `as:${id}` },
+    ]] });
+    return true;
+  }
+  if (a.startsWith("mdd:")) {
+    const ok = await deleteMember(uid, Number(a.slice(4)));
+    await send(uid, ok ? "🗑 A'zo savatga o'tkazildi." : "O'chirib bo'lmadi.", menuKb(true, !!mem));
+    return true;
+  }
+  if (a.startsWith("rl:")) {
+    const id = Number(a.slice(3));
+    const { data: rs } = await sb.from("reports").select("*").eq("tg_id", id).eq("circle_id", circ.id).order("created_at", { ascending: false }).limit(12);
+    if (!rs?.length) { await send(uid, "Hisobot yo'q.", { inline_keyboard: [[{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] }); return true; }
+    const ic = (st: string) => (st === "approved" ? "✅" : st === "pending" ? "⏳" : "🔁");
+    await send(uid, "📖 <b>Hisobotlar</b>\nNoto'g'risini o'chiring 👇", { inline_keyboard: [
+      ...rs.map((r) => [{ text: `🗑 ${ic(r.status)} ${fmt(Number(r.pages))} sahifa · ${r.day}`, callback_data: `rx:${r.id}:${id}` }]),
+      [{ text: "⬅️ Orqaga", callback_data: `as:${id}` }],
+    ] });
+    return true;
+  }
+  if (a.startsWith("rx:")) {
+    const [, rid, id] = a.split(":");
+    await deleteReport(uid, Number(rid));
+    await send(uid, "🗑 Hisobot savatga o'tkazildi.", { inline_keyboard: [[{ text: "📖 Hisobotlar", callback_data: `rl:${id}` }, { text: "⬅️ A'zo", callback_data: `as:${id}` }]] });
+    return true;
+  }
+  if (a.startsWith("xd:")) {
+    const [, xid, id] = a.split(":");
+    await deleteMistake(uid, Number(xid));
+    await send(uid, "🗑 Xato savatga o'tkazildi.", { inline_keyboard: [[{ text: "⚠️ Xatolar", callback_data: `xa:${id}` }]] });
+    return true;
+  }
+  if (a === "tr") {
+    const items = await trashItems(circ.id);
+    if (!items.length) { await send(uid, "🗑 Savat bo'sh.", { inline_keyboard: [[{ text: "⬅️ Orqaga", callback_data: "m" }]] }); return true; }
+    await send(uid, "🗑 <b>Savat</b> — o'chirilganlar. Tiklash uchun bosing 👇", { inline_keyboard: [
+      ...items.slice(0, 15).map((t) => [{ text: `♻️ ${t.label}`.slice(0, 60), callback_data: `tre:${t.id}` }]),
+      [{ text: "⬅️ Orqaga", callback_data: "m" }],
+    ] });
+    return true;
+  }
+  if (a.startsWith("tre:")) {
+    const ok = await restoreTrash(uid, Number(a.slice(4)));
+    await send(uid, ok ? "♻️ Tiklandi." : "Tiklab bo'lmadi (a'zo o'chirilgan bo'lsa, avval a'zoni tiklang).", { inline_keyboard: [[{ text: "🗑 Savat", callback_data: "tr" }, { text: "⬅️ Menyu", callback_data: "m" }]] });
+    return true;
+  }
+  return false;
+}
+
+// ---------- kiruvchi xabarlar ----------
 async function handleText(uid: number, name: string, t: string) {
   const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).maybeSingle();
   if (!s) return showMenu(uid, name);
+  if (s.state === "madd") {
+    const p = parseNewMember(t);
+    if (!p) { await send(uid, "Tushunmadim. Masalan: <code>123456789 Ali +998901234567</code>"); return; }
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    const r = await addMember(uid, p.id, p.name || "A'zo", p.phone);
+    await send(uid, r.ok ? `✅ ${r.existed ? "Yangilandi" : "Qo'shildi"}: <b>${esc(r.name)}</b>${p.phone ? " · " + esc(p.phone) : ""}\n🆔 <code>${p.id}</code>\n\nA'zo botni ochib /start bossin.`
+      : r.err === "other_circle" ? "Bu ID boshqa halqada." : "ID noto'g'ri.", { inline_keyboard: [[{ text: "➕ Yana qo'shish", callback_data: "ma" }, { text: "👥 A'zolar", callback_data: "al" }]] });
+    return;
+  }
+  if (s.state === "msg") {
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    const ok = await messageAdmin(uid, t);
+    await send(uid, ok ? "✅ Yo'naltiruvchiga yuborildi." : "Yuborib bo'lmadi.", menuKb(false, true));
+    return;
+  }
   if (await textPlus(uid, name, t, s)) return;
   const n = Math.round(parseFloat(t.replace(",", ".")) * 100) / 100;
   if (!(n > 0 && n <= 100)) {
@@ -1506,11 +1691,9 @@ async function handleMessage(msg: any) {
   }
   if (t.startsWith("/start")) {
     const payload = t.split(/\s+/)[1] ?? "";
-    if (payload.startsWith("j_")) return joinByCode(payload.slice(2), uid, name);
     return act("start", uid, name);
   }
   if (t.startsWith("/menyu") || t.startsWith("/menu")) return act("menu", uid, name);
-  if (t.startsWith("/taklif")) return act("inv", uid, name);
   if (t.startsWith("/")) return;
   return handleText(uid, name, t);
 }
@@ -1721,7 +1904,7 @@ async function rpc(req: Request) {
       const members = await Promise.all((ms ?? []).map(async (m) => {
         const s = st.get(m.tg_id)!;
         return {
-          id: m.tg_id, name: m.name, goal: s.goal, approved: s.approved, pending: s.pending,
+          id: m.tg_id, name: m.name, phone: m.phone ?? null, goal: s.goal, approved: s.approved, pending: s.pending,
           expected: s.goal ? expected(s.goal) : 0, lt: await longTerm(m.tg_id),
         };
       }));
@@ -1780,7 +1963,7 @@ async function rpc(req: Request) {
     }
     case "invite": {
       if (!admin) return forbid();
-      return json({ link: `https://t.me/${await botUsername()}?start=j_${circ.join_code}` });
+      return json({ error: "disabled" }, 410);
     }
     case "join": {
       if (!admin) return forbid();
@@ -1862,6 +2045,41 @@ async function rpc(req: Request) {
       }
       await liveFinish(uid, name, range, null, true);
       return ok();
+    }
+    case "member_add": {
+      if (!admin) return forbid();
+      const r = await addMember(uid, Number(body.id), String(body.name ?? "").trim(), String(body.phone ?? "").trim() || null);
+      return r.ok ? json({ ok: true, existed: r.existed }) : json({ error: r.err }, 400);
+    }
+    case "member_delete": {
+      if (!admin) return forbid();
+      return (await deleteMember(uid, Number(body.id))) ? ok() : bad();
+    }
+    case "report_list": {
+      if (!admin) return forbid();
+      const id = Number(body.id);
+      if (!(await memberInCircle(uid, id))) return forbid();
+      const { data } = await sb.from("reports").select("id,pages,day,status").eq("tg_id", id).order("created_at", { ascending: false }).limit(30);
+      return json({ items: (data ?? []).map((r) => ({ id: r.id, pages: Number(r.pages), day: r.day, status: r.status })) });
+    }
+    case "report_delete":
+      if (!admin) return forbid();
+      return (await deleteReport(uid, Number(body.id))) ? ok() : bad();
+    case "mist_delete":
+      if (!admin) return forbid();
+      return (await deleteMistake(uid, Number(body.id))) ? ok() : bad();
+    case "trash_list": {
+      if (!admin) return forbid();
+      return json({ items: await trashItems(circId) });
+    }
+    case "trash_restore": {
+      if (!admin) return forbid();
+      return (await restoreTrash(uid, Number(body.id))) ? ok() : json({ error: "restore_failed" }, 400);
+    }
+    case "message": {
+      const t = String(body.text ?? "").trim();
+      if (!mem || !t) return bad();
+      return (await messageAdmin(uid, t)) ? ok() : bad();
     }
     case "voice_get":
     case "voice_send": {

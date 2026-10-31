@@ -214,7 +214,8 @@ async function mistakesList(memberId, canFix, onChange) {
     h("div", { class: "row" }, h("b", {}, m.ref + (m.word ? " · " + m.word + "-so'z" : "")), h("span", { class: "meta" }, d.kinds[m.kind] || m.kind)),
     m.note ? h("div", { class: "meta" }, "💬 " + m.note) : null,
     h("div", { class: "meta" }, m.day + (m.byAdmin ? " · yo'naltiruvchi belgiladi" : " · o'zi belgiladi")),
-    m.status === "open" && canFix ? h("button", { class: "btn wide", onclick: async () => { try { await rpc("mist_fix", { id: m.id }); toast("✅ Tuzatildi"); onChange(); } catch (e) { toast("Xato: " + e.message); } } }, "✅ Tuzatdim") : null);
+    m.status === "open" && canFix ? h("button", { class: "btn wide", onclick: async () => { try { await rpc("mist_fix", { id: m.id }); toast("✅ Tuzatildi"); onChange(); } catch (e) { toast("Xato: " + e.message); } } }, "✅ Tuzatdim") : null,
+    S.me && S.me.isAdmin && memberId ? h("button", { class: "btn wide", onclick: async () => { try { await rpc("mist_delete", { id: m.id }); toast("🗑 Savatga o'tdi"); onChange(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑 O'chirish") : null);
   root.append(h("div", { class: "sec" }, "Ochiq xatolar (" + open.length + ")"));
   if (!open.length) root.append(h("div", { class: "msg" }, "Ochiq xato yo'q 🎉"));
   open.forEach(m => root.append(row(m)));
@@ -274,4 +275,60 @@ async function voiceFallback(b, sid) {
   b.disabled = false; b.textContent = "🎧 Ovozni tinglash";
   openSheet("🎧 Ovoz", close => h("div", {}, h("div", { class: "meta" }, "Bu qurilmada ovozni saytda ijro etib bo'lmadi. Telegramning o'zida eshiting:"),
     h("button", { class: "btn primary wide", onclick: async () => { try { await rpc("voice_send", { id: sid }); toast("📨 Botga yuborildi"); close(); } catch (e) { toast("Xato: " + e.message); } } }, "📨 Botga yuborish")));
+}
+
+// ---- a'zoni qo'shish / o'chirish / savat / xabar (admin va a'zo) ----
+function addMemberSheet() {
+  openSheet("➕ A'zo qo'shish", close => {
+    const id = h("input", { type: "number", inputmode: "numeric", placeholder: "Telegram ID" });
+    const nm = h("input", { type: "text", maxlength: "60", placeholder: "Ism" });
+    const ph = h("input", { type: "tel", maxlength: "20", placeholder: "Telefon (+998...)" });
+    return h("div", {}, h("div", { class: "meta" }, "A'zo yuborgan ID va telefonni kiriting. Faqat qo'shilganlar botdan foydalana oladi."),
+      h("div", { class: "custom", style: "margin-top:10px" }, id), h("div", { class: "custom", style: "margin-top:8px" }, nm),
+      h("div", { class: "custom", style: "margin-top:8px" }, ph),
+      h("button", { class: "btn primary wide", onclick: async () => {
+        if (!id.value) return toast("Telegram ID yozing");
+        try { await rpc("member_add", { id: Number(id.value), name: nm.value, phone: ph.value }); close(); toast("✅ Qo'shildi"); await reload(); }
+        catch (e) { toast(e.message === "bad_id" ? "ID noto'g'ri" : e.message === "other_circle" ? "Bu ID boshqa halqada" : "Xato: " + e.message); }
+      } }, "Qo'shish"));
+  });
+}
+async function memberReportsSheet(m) {
+  try {
+    const d = await rpc("report_list", { id: m.id });
+    openSheet("📖 " + m.name + ": hisobotlar", close => {
+      const w = h("div", {}, h("div", { class: "meta" }, "Noto'g'ri kiritilganni o'chiring (Savatdan tiklash mumkin)."));
+      if (!d.items.length) w.append(h("div", { class: "msg" }, "Hisobot yo'q."));
+      const ic = { approved: "✅", pending: "⏳", repeat: "🔁" };
+      d.items.forEach(r => w.append(h("div", { class: "card" }, h("div", { class: "row" },
+        h("span", {}, (ic[r.status] || "") + " " + fmt(r.pages) + " sahifa · " + r.day),
+        h("button", { class: "btn", onclick: async () => { try { await rpc("report_delete", { id: r.id }); toast("🗑 Savatga o'tdi"); close(); reload(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑")))));
+      return w;
+    });
+  } catch (e) { toast("Xato: " + e.message); }
+}
+function deleteMemberSheet(m) {
+  openSheet("🗑 " + m.name, close => h("div", {},
+    h("div", { class: "meta" }, "A'zo botdan foydalana olmaydi. Hamma ma'lumoti Savatda saqlanadi, tiklash mumkin."),
+    h("button", { class: "btn primary wide", onclick: async () => { try { await rpc("member_delete", { id: m.id }); close(); toast("🗑 Savatga o'tdi"); await reload(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑 Ha, o'chirish"),
+    h("button", { class: "btn wide", onclick: close }, "Bekor")));
+}
+async function trashView() {
+  const d = await rpc("trash_list"), root = h("div");
+  root.append(h("div", { class: "sub" }, "O'chirilganlar. Tiklash uchun ♻️ ni bosing."));
+  if (!d.items.length) root.append(h("div", { class: "msg" }, "Savat bo'sh."));
+  const kind = { member: "👤", report: "📖", mistake: "⚠️" };
+  d.items.forEach(t => root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", {}, (kind[t.kind] || "") + " " + t.label), h("button", { class: "btn", onclick: async () => {
+      try { await rpc("trash_restore", { id: t.id }); toast("♻️ Tiklandi"); render(); }
+      catch (e) { toast("Tiklab bo'lmadi (a'zo o'chirilgan bo'lsa, avval a'zoni tiklang)"); } } }, "♻️")),
+    h("div", { class: "meta" }, String(t.deleted_at).slice(0, 16).replace("T", " ")))));
+  return root;
+}
+function writeAdminSheet() {
+  openSheet("✉️ Yo'naltiruvchiga yozish", close => {
+    const t = h("textarea", { class: "rep", style: "min-height:110px", placeholder: "Masalan: kecha noto'g'ri sahifa yuborib qo'ydim…" });
+    return h("div", {}, h("div", { class: "meta" }, "Xato qilsangiz yoki savolingiz bo'lsa, shu yerga yozing — yo'naltiruvchi o'zi tuzatadi."), t,
+      h("button", { class: "btn primary wide", onclick: async () => { if (!t.value.trim()) return toast("Matn yozing"); try { await rpc("message", { text: t.value }); close(); toast("✅ Yuborildi"); } catch (e) { toast("Xato: " + e.message); } } }, "Yuborish"));
+  });
 }
