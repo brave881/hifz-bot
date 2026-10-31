@@ -64,3 +64,12 @@
   .names button small { color: var(--muted); margin-left: 4px; }
   .seg.wrap { flex-wrap: wrap; } .seg.wrap button { flex: 1 1 auto; }
   textarea.rep { width: 100%; min-height: 160px; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 10px; font: inherit; font-size: 13px; }
+
+  .ar { direction: rtl; font-family: "Amiri", "Scheherazade New", "Traditional Arabic", "Noto Naskh Arabic", serif; font-size: 26px; line-height: 2.2; margin-top: 10px; text-align: right; }
+  .ar .no { font-size: 16px; color: var(--gold); }
+  .ar .meta { direction: ltr; font-family: system-ui, sans-serif; }
+  .row.day .rng { font-size: 13px; color: var(--muted); text-align: right; }
+  .row.day.now { background: var(--green-soft); border-radius: 8px; padding: 4px 6px; }
+  .card.live { border-color: var(--green); }
+  select { flex: 1; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 12px; font: inherit; }
+  nav.nav button span:last-child { font-size: 10px; }

@@ -11,6 +11,7 @@
 <div id="app"></div>
 <div id="toast"></div>
 <script src="../common.js"></script>
+<script src="../plus.js"></script>
 <script>
 const statusOf = m => {
   if (!m.goal) return "none";
@@ -36,8 +37,25 @@ function memberSheet(m) {
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🗓 " + m.name + ": yillik necha juz?", nums: [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30], max: 30,
       hint: "1 juz = 20 sahifa. Reja 52 hafta davom etadi.",
       onPick: v => act("setyear", { id: m.id, juz: v }, "✅ Yillik reja belgilandi") }); } }, "🗓 Yillik (juz)"));
+    w.append(h("div", { class: "actions", style: "margin-top:8px" },
+      h("button", { class: "btn", onclick: () => { close(); memberPlanSheet(m); } }, "🗺 Reja"),
+      h("button", { class: "btn", onclick: () => { close(); memberMistakesSheet(m); } }, "⚠️ Xatolar")));
     return w;
   });
+}
+
+async function memberPlanSheet(m) {
+  try {
+    const pi = await rpc("plan", { id: m.id });
+    openSheet("🗺 " + m.name, () => planCard(pi));
+  } catch (e) { toast("Xato: " + e.message); }
+}
+async function memberMistakesSheet(m) {
+  try {
+    const list = await mistakesList(m.id, true, () => { document.querySelector(".ov")?.remove(); memberMistakesSheet(m); });
+    openSheet("⚠️ " + m.name, () => h("div", {},
+      h("button", { class: "btn primary wide", onclick: () => { document.querySelector(".ov")?.remove(); mistakeSheet(m.id, () => memberMistakesSheet(m)); } }, "⚠️ Xato qo'shish"), list));
+  } catch (e) { toast("Xato: " + e.message); }
 }
 
 function copyOrShow(text) {
@@ -148,11 +166,11 @@ async function settingsView() {
   return root;
 }
 
-const VIEWS = { dash: dashView, pending: pendingView, members: membersView, rank: rankView, settings: settingsView };
+const VIEWS = { dash: dashView, pending: pendingView, members: membersView, live: liveView, rank: rankView, settings: settingsView };
 let R = 0;
 function tabs() {
   return [["dash", "📋", "Umumiy"], ["pending", "⏳", "Tekshirish" + (S.me.pendingCount ? " (" + S.me.pendingCount + ")" : "")],
-    ["members", "👥", "A'zolar"], ["rank", "🏆", "Reyting"], ["settings", "⚙️", "Sozlamalar"]];
+    ["members", "👥", "A'zolar"], ["live", "🔴", "Hozir"], ["rank", "🏆", "Reyting"], ["settings", "⚙️", "Sozlamalar"]];
 }
 async function render() {
   const my = ++R;

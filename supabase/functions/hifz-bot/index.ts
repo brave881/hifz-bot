@@ -1,5 +1,7 @@
 // Hifz Tracker v3: yo'naltiruvchi (admin) tasdiqlaydigan haftalik reja tizimi
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { PAGE_FIRST, SURAH_AYAHS } from "./quran-data.ts";
+import { ayahId, dayBlocks, fromId, eta as etaDate, label, nextBlock, pagesIn, TOTAL, validSA, weekBlock, type Dir } from "./plan.ts";
 
 const BOT = Deno.env.get("BOT_TOKEN")!;
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -246,8 +248,15 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
       { text: "📊 Natijam", callback_data: "me" },
       { text: "🎯 Haftalik maqsad", callback_data: "gp" },
     ]);
+    rows.push([
+      { text: "▶️ Yodlash (jonli)", callback_data: "lm" },
+      { text: "🗺 Rejam", callback_data: "pl" },
+    ]);
   }
-  if (isMem || isAdmin) rows.push([{ text: "🏆 Reyting", callback_data: "top:w" }]);
+  if (isMem || isAdmin) rows.push([
+    { text: "🏆 Reyting", callback_data: "top:w" },
+    { text: "🔴 Hozir kim?", callback_data: "lv" },
+  ]);
   if (isMem) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
   if (isAdmin) {
     rows.push([{ text: `⏳ Tekshirish${pending ? ` (${pending})` : ""}`, callback_data: "ap" }]);
@@ -509,6 +518,8 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "new") return showMenu(uid, name);
 
+  if (await actPlus(a, uid, name, mid)) return;
+
   if (a === "inv") {
     if (!circ) return;
     const u = await botUsername();
@@ -606,6 +617,10 @@ async function act(a: string, uid: number, name: string, mid?: number) {
       { text: "📅 Oylik", callback_data: `am:${id}` },
       { text: "🗓 Yillik", callback_data: `ay:${id}` },
     ]);
+    rows.push([
+      { text: "🗺 Reja", callback_data: `ap:${id}` },
+      { text: "⚠️ Xatolar", callback_data: `xa:${id}` },
+    ]);
     rows.push([{ text: "⬅️ Orqaga", callback_data: "al" }]);
     return send(uid,
       `👤 <b>${esc(m.name)}</b>\n🎯 Bu hafta: ${s.goal ? `${fmt(s.approved)} / ${fmt(s.goal)}` : "reja yo'q"}${ltLines(lt)}`,
@@ -692,6 +707,482 @@ async function act(a: string, uid: number, name: string, mid?: number) {
   }
 }
 
+// ---------- v9: batafsil reja, jonli yodlash, xatolar ----------
+const hm = (d: Date | string | number) => new Date(new Date(d).getTime() + TZ * 3600e3).toISOString().slice(11, 16);
+const SLOTS: Record<string, string> = { fajr: "🌅 Bomdoddan keyin", isha: "🌙 Xufton namozidan keyin", other: "🕒 Boshqa vaqt" };
+const KINDS: Record<string, string> = { forgot: "Unutdim/to'xtadim", wrong: "Almashtirdim", tajweed: "Tajvid/talaffuz", other: "Boshqa" };
+const halfRound = (p: number) => Math.max(0.5, Math.round(p * 2) / 2);
+const pageStr = (n: number) => (Math.round(n * 10) / 10).toString().replace(".", ",");
+
+// "78", "78 1", "78:1", "bet 582" -> global oyat raqami
+function parseAyah(t: string): number | null {
+  const s = t.trim().toLowerCase().replace(/[:,.\-–]+/g, " ").replace(/\s+/g, " ");
+  const m = s.match(/^(?:bet|b|page|p)\s*(\d+)$/);
+  if (m) { const p = Number(m[1]); return p >= 1 && p <= 604 ? PAGE_FIRST[p - 1] : null; }
+  const parts = s.split(" ").map(Number);
+  if (!parts.length || parts.some((x) => !Number.isInteger(x))) return null;
+  const [su, ay = 1] = parts;
+  return parts.length <= 2 && validSA(su, ay) ? ayahId(su, ay) : null;
+}
+// "78:1 - 78:20" yoki "78 1 78 20" -> [from, to]
+function parseRange(t: string): [number, number] | null {
+  const nums = t.replace(/[:\-–→,.]+/g, " ").trim().split(/\s+/).map(Number);
+  if (nums.some((x) => !Number.isInteger(x))) return null;
+  let a: number | null = null, b: number | null = null;
+  if (nums.length === 4) { a = validSA(nums[0], nums[1]) ? ayahId(nums[0], nums[1]) : null; b = validSA(nums[2], nums[3]) ? ayahId(nums[2], nums[3]) : null; }
+  else if (nums.length === 3 && validSA(nums[0], nums[1]) && nums[2] >= nums[1] && nums[2] <= SURAH_AYAHS[nums[0] - 1]) { a = ayahId(nums[0], nums[1]); b = ayahId(nums[0], nums[2]); }
+  if (!a || !b || b < a) return null;
+  return [a, b];
+}
+
+async function getPos(uid: number) {
+  const { data: p } = await sb.from("positions").select("*").eq("tg_id", uid).maybeSingle();
+  if (!p) return null;
+  const ws = weekStart();
+  if (p.week_start !== ws) {
+    p.week_start = ws; p.week_ptr = p.ptr;
+    await sb.from("positions").update({ week_start: ws, week_ptr: p.ptr }).eq("tg_id", uid);
+  }
+  return p as { tg_id: number; ptr: number; dir: number; start_ayah: number; week_start: string; week_ptr: number };
+}
+async function setPos(uid: number, ptr: number, dir: number) {
+  const ws = weekStart();
+  await sb.from("positions").upsert({ tg_id: uid, ptr, dir, start_ayah: ptr, week_start: ws, week_ptr: ptr, updated_at: new Date().toISOString() });
+}
+
+type PlanInfo = {
+  has: boolean; dir?: number; start?: string; last?: string | null; next?: string;
+  goal: number; done: number; left: number;
+  today?: { from: string; to: string; pages: number; fromId: number; toId: number } | null; todayDone?: boolean;
+  week?: { from: string; to: string; pages: number } | null;
+  days?: { day: string; from: string; to: string; pages: number; today: boolean }[];
+  avgWeek: number; remainPlan?: number; eta?: string | null; planPages?: number; weekPtr?: number;
+};
+const DAYN = ["Du", "Se", "Ch", "Pa", "Ju", "Sh"];
+async function planInfo(uid: number): Promise<PlanInfo> {
+  const ws = weekStart();
+  const s = (await statsFor([uid], ws)).get(uid)!;
+  const goal = s.goal, done = s.approved + s.pending;
+  const info: PlanInfo = { has: false, goal, done, left: Math.max(0, goal - done), avgWeek: 0 };
+  // o'rtacha tezlik: oxirgi 28 kun (yoki boshlanganidan beri), tasdiqlangan sahifalar
+  const { data: rs } = await sb.from("reports").select("day,pages").eq("tg_id", uid).eq("status", "approved");
+  if (rs?.length) {
+    const first = rs.map((r) => r.day).sort()[0];
+    const span = Math.min(28, Math.max(7, daysBetween(first, day()) + 1));
+    const since = addDays(day(), -27);
+    const tot = rs.filter((r) => r.day >= since).reduce((x, r) => x + Number(r.pages), 0);
+    info.avgWeek = (tot / span) * 7;
+  }
+  const lt = await longTerm(uid);
+  if (lt.plan) {
+    info.planPages = lt.plan.pages;
+    info.remainPlan = Math.max(0, lt.plan.pages - lt.plan.approved);
+    info.eta = etaDate(info.remainPlan, info.avgWeek, day());
+  }
+  const p = await getPos(uid);
+  if (!p) return info;
+  info.has = true;
+  const dir = (p.dir === -1 ? -1 : 1) as Dir;
+  info.dir = dir; info.start = label(p.start_ayah); info.next = label(p.ptr); info.weekPtr = p.week_ptr;
+  const lastId = dir === 1 ? p.ptr - 1 : p.ptr + 1;
+  info.last = p.ptr !== p.start_ayah && lastId >= 1 && lastId <= TOTAL ? label(lastId) : null;
+  if (goal > 0) {
+    const wb = weekBlock(p.week_ptr, goal, dir);
+    info.week = wb ? { from: label(wb.from), to: label(wb.to), pages: wb.pages } : null;
+    const di = dayIdx();
+    info.days = dayBlocks(p.week_ptr, goal, dir).map((b, i) => ({
+      day: DAYN[i], from: b ? label(b.from) : "—", to: b ? label(b.to) : "—", pages: b ? b.pages : 0, today: i === di,
+    }));
+    const need = expected(goal) - done;
+    if (need <= 0.05) info.todayDone = true;
+    else {
+      const b = nextBlock(p.ptr, need, dir);
+      if (b) info.today = { from: label(b.from), to: label(b.to), pages: b.pages, fromId: b.from, toId: b.to };
+    }
+  } else {
+    const b = nextBlock(p.ptr, 1, dir);
+    if (b) info.today = { from: label(b.from), to: label(b.to), pages: b.pages, fromId: b.from, toId: b.to };
+  }
+  return info;
+}
+
+function planText(pi: PlanInfo) {
+  if (!pi.has) {
+    return "🗺 <b>Rejam</b>\n\nHali boshlanish nuqtasi tanlanmagan.\nNimani, qayerdan yodlashni <b>o'zingiz</b> tanlaysiz 👇";
+  }
+  const L = [`🗺 <b>Rejam</b>`, ""];
+  L.push(`📍 Boshlangan joy: ${pi.start} (${pi.dir === 1 ? "oldinga ➡️" : "orqaga ⬅️"})`);
+  L.push(pi.last ? `✅ Oxirgi yodlangan: <b>${pi.last}</b>` : "✅ Hali yodlash boshlanmagan");
+  L.push(`➡️ Keyingi: <b>${pi.next}</b>`);
+  if (pi.goal) {
+    L.push("", `🎯 Hafta: ${fmt(pi.done)} / ${fmt(pi.goal)} sahifa — qoldi <b>${fmt(pi.left)}</b>`);
+    if (pi.week) L.push(`📅 Haftalik oraliq: ${pi.week.from} → ${pi.week.to} (${pageStr(pi.week.pages)} bet)`);
+    if (pi.todayDone) L.push("🌟 Bugungi reja bajarilgan!");
+    else if (pi.today) L.push(`📌 Bugun: <b>${pi.today.from} → ${pi.today.to}</b> (~${pageStr(pi.today.pages)} bet)`);
+    if (pi.days?.length) {
+      L.push("", "🗓 Kunlar bo'yicha:");
+      for (const d of pi.days) if (d.pages > 0) L.push(`${d.today ? "👉" : "▫️"} ${d.day}: ${d.from} → ${d.to}`);
+    }
+  } else {
+    L.push("", "🎯 Bu hafta maqsad belgilanmagan — «🎯 Haftalik maqsad» ni bosing.");
+    if (pi.today) L.push(`📌 Taxminan 1 bet: ${pi.today.from} → ${pi.today.to}`);
+  }
+  L.push("", `⚡ O'rtacha tezlik: ${pageStr(pi.avgWeek)} bet/hafta`);
+  if (pi.planPages) {
+    L.push(`🏁 Yillik rejadan qoldi: ${fmt(pi.remainPlan ?? 0)} bet`);
+    L.push(pi.eta ? `📆 Shu tezlikda tugash: <b>${pi.eta}</b>` : "📆 Tugash sanasi: tezlik hisoblash uchun hisobotlar kerak");
+  }
+  return L.join("\n");
+}
+const planKb = (pi: PlanInfo) => ({
+  inline_keyboard: [
+    [{ text: "📍 Boshlanish nuqtasini tanlash", callback_data: "ps" }],
+    ...(pi.has ? [[{ text: pi.dir === 1 ? "🔄 Orqaga yodlayman" : "🔄 Oldinga yodlayman", callback_data: "pd" }]] : []),
+    [{ text: "⚠️ Xato belgilash", callback_data: "xs" }, { text: "📋 Xatolarim", callback_data: "xl" }],
+    [{ text: "⬅️ Orqaga", callback_data: "m" }],
+  ],
+});
+
+// hammaga xabar (halqa a'zolari + yo'naltiruvchi), harakat qilgandan tashqari
+async function broadcast(circId: number, exceptUid: number, msg: string) {
+  const circ = await circleById(circId);
+  if (!circ) return;
+  const { data: ms } = await sb.from("members").select("tg_id").eq("circle_id", circId);
+  const ids = new Set<number>([circ.admin_id, ...(ms ?? []).map((m) => m.tg_id)]);
+  ids.delete(exceptUid);
+  await Promise.all([...ids].map((id) => send(id, msg).catch(() => {})));
+}
+
+// 14 soatdan eski "jonli" holat o'z-o'zidan yopilgan hisoblanadi
+const liveCutoff = () => new Date(Date.now() - 14 * 3600e3).toISOString();
+async function liveOf(uid: number) {
+  return (await sb.from("study_sessions").select("*").eq("tg_id", uid).eq("status", "live").gte("started_at", liveCutoff())
+    .order("started_at", { ascending: false }).limit(1).maybeSingle()).data;
+}
+
+async function liveStart(uid: number, name: string, slot: string, hours: number, quiet = false) {
+  const mem = await memberOf(uid);
+  if (!mem) return showMenu(uid, name);
+  const ex = await liveOf(uid);
+  if (ex) return quiet ? undefined : send(uid, "Siz allaqachon yodlayapsiz ▶️. Tugatsangiz «⏹ Tugatdim» ni bosing.", liveMenuKb(true));
+  const now = new Date(), end = new Date(now.getTime() + hours * 3600e3);
+  const { data: s } = await sb.from("study_sessions").insert({
+    tg_id: uid, circle_id: mem.circle_id, slot, win_from: hm(now), win_to: hm(end),
+  }).select().single();
+  const pi = await planInfo(uid);
+  const where = pi.has ? (pi.today ? `\n📌 Reja: ${pi.today.from} → ${pi.today.to}` : `\n➡️ Keyingi: ${pi.next}`) : "";
+  await broadcast(mem.circle_id, uid,
+    `▶️ <b>${esc(mem.name)}</b> yodlashni boshladi\n${SLOTS[slot] ?? SLOTS.other} · ${s.win_from}–${s.win_to}${where}`);
+  if (quiet) return;
+  return send(uid, `▶️ Boshladingiz: ${s.win_from}–${s.win_to}\nBarakalla! Hamma ko'rdi 🌙\nTugatganda «⏹ Tugatdim» ni bosing.`, liveMenuKb(true));
+}
+
+async function liveTime(uid: number, name: string, hours: number, quiet = false) {
+  const mem = await memberOf(uid);
+  const s = await liveOf(uid);
+  if (!mem || !s) return quiet ? undefined : send(uid, "Hozir faol yodlash yo'q.");
+  const end = new Date(Date.now() + hours * 3600e3);
+  await sb.from("study_sessions").update({ win_to: hm(end) }).eq("id", s.id);
+  await broadcast(mem.circle_id, uid, `🕒 <b>${esc(mem.name)}</b> vaqtni o'zgartirdi: ${s.win_from}–${hm(end)}`);
+  if (quiet) return;
+  return send(uid, `🕒 Yangi vaqt: ${s.win_from}–${hm(end)}`, liveMenuKb(true));
+}
+
+// yodlash tugadi: oraliq (from..to) bo'lsa pozitsiya suriladi va avtomatik hisobot ketadi
+async function liveFinish(uid: number, name: string, range: [number, number] | null, voice: string | null, quiet = false) {
+  const mem = await memberOf(uid);
+  const s = await liveOf(uid);
+  if (!mem || !s) return quiet ? undefined : send(uid, "Hozir faol yodlash yo'q.");
+  let pages = 0, rid: number | null = null;
+  if (range) {
+    pages = halfRound(pagesIn(range[0], range[1]));
+    const p = await getPos(uid);
+    const dir = p?.dir === -1 ? -1 : 1;
+    const newPtr = dir === 1 ? range[1] + 1 : range[0] - 1;
+    if (newPtr >= 1 && newPtr <= TOTAL) await sb.from("positions").upsert({
+      tg_id: uid, ptr: newPtr, dir, start_ayah: p?.start_ayah ?? (dir === 1 ? range[0] : range[1]),
+      week_start: p?.week_start ?? weekStart(), week_ptr: p?.week_ptr ?? (dir === 1 ? range[0] : range[1]),
+      updated_at: new Date().toISOString(),
+    });
+    const circ = await circleById(mem.circle_id);
+    const { data: r } = await sb.from("reports").insert({
+      tg_id: uid, circle_id: mem.circle_id, week_start: weekStart(), day: day(), pages,
+    }).select().single();
+    rid = r?.id ?? null;
+    if (circ && r) {
+      await send(circ.admin_id,
+        `📖 <b>${esc(mem.name)}</b> yodladi: <b>${label(range[0])} → ${label(range[1])}</b>\n≈ <b>${fmt(pages)}</b> sahifa · 📅 ${day()}\n\n` +
+        `📞 Qo'ng'iroq qilib eshiting, keyin tasdiqlang.\n<a href="tg://user?id=${uid}">👤 ${esc(mem.name)} profiliga o'tish</a>`,
+        { inline_keyboard: [
+          [{ text: "✅ Tasdiqlash", callback_data: `ok:${r.id}` }, { text: "🔁 Qayta", callback_data: `rt:${r.id}` }],
+          [{ text: "⚠️ Xato belgilash", callback_data: `xm:${uid}` }],
+        ] });
+      if (voice) await tg("sendVoice", { chat_id: circ.admin_id, voice, caption: `🎙 ${mem.name}` });
+    }
+  } else {
+    const circ = await circleById(mem.circle_id);
+    if (circ && voice) await tg("sendVoice", { chat_id: circ.admin_id, voice, caption: `🎙 ${mem.name}` });
+  }
+  await sb.from("study_sessions").update({
+    status: "done", ended_at: new Date().toISOString(),
+    from_ayah: range?.[0] ?? null, to_ayah: range?.[1] ?? null, pages: range ? pages : null,
+    voice_file: voice, report_id: rid,
+  }).eq("id", s.id);
+  await broadcast(mem.circle_id, uid,
+    `⏹ <b>${esc(mem.name)}</b> yodlashni tugatdi (${s.win_from}–${hm(new Date())})` +
+    (range ? `\n📖 ${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa)` : "") + (voice ? "\n🎙 Ovoz yo'naltiruvchiga yuborildi" : ""));
+  if (quiet) return;
+  return send(uid, `⏹ Tugadi! ${range ? `${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa) yo'naltiruvchiga yuborildi ✅` : "Saqlandi."}`, menuKb(!!(await circleOfAdmin(uid)), true));
+}
+
+async function liveList(circId: number) {
+  const { data: live } = await sb.from("study_sessions").select("*").eq("circle_id", circId).eq("status", "live").gte("started_at", liveCutoff()).order("started_at");
+  const since = new Date(Date.now() - 36 * 3600e3).toISOString();
+  const { data: done } = await sb.from("study_sessions").select("*").eq("circle_id", circId).eq("status", "done").gte("ended_at", since).order("ended_at", { ascending: false }).limit(20);
+  const ids = [...new Set([...(live ?? []), ...(done ?? [])].map((x) => x.tg_id))];
+  const { data: ms } = ids.length ? await sb.from("members").select("tg_id,name").in("tg_id", ids) : { data: [] };
+  const names = new Map((ms ?? []).map((m: any) => [m.tg_id, m.name]));
+  const nm = (id: number) => names.get(id) ?? "A'zo";
+  const mapS = (x: any) => ({
+    id: x.id, tg_id: x.tg_id, name: nm(x.tg_id), slot: x.slot, from: x.win_from, to: x.win_to,
+    started: hm(x.started_at), ended: x.ended_at ? hm(x.ended_at) : null, day: x.ended_at ? day(0) : null,
+    range: x.from_ayah ? `${label(x.from_ayah)} → ${label(x.to_ayah)}` : null, pages: x.pages ? Number(x.pages) : null,
+  });
+  return { live: (live ?? []).map(mapS), done: (done ?? []).map(mapS) };
+}
+async function liveText(circId: number) {
+  const { live, done } = await liveList(circId);
+  const L = ["🔴 <b>Hozir yodlayotganlar</b>", ""];
+  if (!live.length) L.push("Hozir hech kim yodlamayapti.");
+  for (const x of live) L.push(`▶️ <b>${esc(x.name)}</b> — ${SLOTS[x.slot] ?? ""} ${x.from}–${x.to}`);
+  if (done.length) {
+    L.push("", "⏹ So'nggi tugatganlar:");
+    for (const x of done.slice(0, 8)) L.push(`• ${esc(x.name)} ${x.started}–${x.ended}${x.range ? ` — ${x.range}` : ""}`);
+  }
+  return L.join("\n");
+}
+const liveMenuKb = (isLive: boolean) => ({
+  inline_keyboard: [
+    isLive
+      ? [{ text: "⏹ Tugatdim", callback_data: "lf" }, { text: "🕒 Vaqtni o'zgartirdim", callback_data: "lc" }]
+      : [{ text: "▶️ Boshladim", callback_data: "ls" }],
+    [{ text: "🔴 Hozir kim yodlayapti", callback_data: "lv" }, { text: "⬅️ Orqaga", callback_data: "m" }],
+  ],
+});
+const hoursKb = (prefix: string, back: string) => ({
+  inline_keyboard: [
+    [1, 2, 3, 4].map((h) => ({ text: `${h} soat`, callback_data: `${prefix}:${h}` })),
+    [{ text: "⬅️ Orqaga", callback_data: back }],
+  ],
+});
+
+// ---- xatolar ----
+async function addMistake(byUid: number, targetUid: number, ayah: number, word: number | null, kind: string, note: string | null) {
+  const target = await memberOf(targetUid);
+  if (!target) return null;
+  const live = await liveOf(targetUid);
+  const { data: m } = await sb.from("mistakes").insert({
+    tg_id: targetUid, circle_id: target.circle_id, by_id: byUid, ayah, word, kind: KINDS[kind] ? kind : "other",
+    note, session_id: live?.id ?? null,
+  }).select().single();
+  if (byUid !== targetUid) {
+    await send(targetUid,
+      `⚠️ Yo'naltiruvchi xato belgiladi:\n<b>${label(ayah)}</b>${word ? `, ${word}-so'z` : ""} — ${KINDS[m.kind]}${note ? `\n💬 ${esc(note)}` : ""}\n\nTuzatgach «📋 Xatolarim» dan belgilang.`).catch(() => {});
+  } else {
+    const circ = await circleById(target.circle_id);
+    if (circ && circ.admin_id !== byUid) {
+      await send(circ.admin_id, `⚠️ <b>${esc(target.name)}</b> xato belgiladi: <b>${label(ayah)}</b>${word ? `, ${word}-so'z` : ""} — ${KINDS[m.kind]}${note ? `\n💬 ${esc(note)}` : ""}`).catch(() => {});
+    }
+  }
+  return m;
+}
+const mistakeKindKb = () => ({
+  inline_keyboard: [
+    ...chunk(Object.entries(KINDS), 2).map((r) => r.map(([k, v]) => ({ text: v, callback_data: `xk:${k}` }))),
+  ],
+});
+async function mistakeList(uid: number) {
+  const { data } = await sb.from("mistakes").select("*").eq("tg_id", uid).eq("status", "open").order("created_at", { ascending: false }).limit(30);
+  return data ?? [];
+}
+// "78:5" yoki "78:5 3 izoh" -> oyat, so'z, izoh
+function parseMistake(t: string): { ayah: number; word: number | null; note: string | null } | null {
+  const m = t.trim().match(/^(\d{1,3})\s*[:\s.-]\s*(\d{1,3})(?:\s+(\d{1,3}))?(?:\s+(.+))?$/s);
+  if (!m) return null;
+  const su = Number(m[1]), ay = Number(m[2]);
+  if (!validSA(su, ay)) return null;
+  return { ayah: ayahId(su, ay), word: m[3] ? Number(m[3]) : null, note: m[4]?.trim().slice(0, 200) || null };
+}
+
+// callback amallari (a'zo va admin); true qaytarsa — ishlov berildi
+async function actPlus(a: string, uid: number, name: string, mid?: number): Promise<boolean> {
+  const circ = await circleOfAdmin(uid);
+  const mem = await memberOf(uid);
+  const setS = (state: string, data: unknown = {}) => sb.from("sessions").upsert({ tg_id: uid, state, data });
+
+  if (a === "pl" && mem) { const pi = await planInfo(uid); await send(uid, planText(pi), planKb(pi)); return true; }
+  if (a === "ps" && mem) {
+    await send(uid, "📍 Qayerdan boshlaysiz? O'zingiz tanlang:", { inline_keyboard: [
+      [{ text: "🔰 Amma (30-juz) — Naba'dan", callback_data: "pp:78:1:1" }],
+      [{ text: "🔰 Amma — Nas'dan orqaga", callback_data: "pp:114:6:-1" }],
+      [{ text: "📖 Baqara — boshidan", callback_data: "pp:2:1:1" }],
+      [{ text: "✍️ O'zim yozaman (sura va oyat)", callback_data: "px" }],
+      [{ text: "⬅️ Orqaga", callback_data: "pl" }],
+    ] });
+    return true;
+  }
+  if (a.startsWith("pp:") && mem) {
+    const [, s, ay, d] = a.split(":");
+    if (!validSA(Number(s), Number(ay))) return true;
+    await setPos(uid, ayahId(Number(s), Number(ay)), Number(d) === -1 ? -1 : 1);
+    const pi = await planInfo(uid);
+    await send(uid, "✅ Nuqta saqlandi.\n\n" + planText(pi), planKb(pi));
+    return true;
+  }
+  if (a === "px" && mem) {
+    await setS("pos");
+    await send(uid, "Sura raqami va oyatni yozing.\nMasalan: <code>78 1</code> (Naba' 1-oyat)\nYoki bet: <code>bet 582</code>");
+    return true;
+  }
+  if (a === "pd" && mem) {
+    const p = await getPos(uid);
+    if (p) {
+      const dir = p.dir === 1 ? -1 : 1;
+      // yo'nalish almashsa, ptr bir blok chetiga o'tmasligi uchun joriy ptr saqlanadi
+      await sb.from("positions").update({ dir, week_ptr: p.ptr }).eq("tg_id", uid);
+    }
+    const pi = await planInfo(uid);
+    await send(uid, planText(pi), planKb(pi));
+    return true;
+  }
+
+  if (a === "lm" && mem) { await send(uid, "🔴 Jonli yodlash", liveMenuKb(!!(await liveOf(uid)))); return true; }
+  if (a === "lv" && (mem || circ)) {
+    const cid = circ?.id ?? mem!.circle_id;
+    const t = await liveText(cid);
+    if (mid) await edit(uid, mid, t, { inline_keyboard: [[{ text: "🔄 Yangilash", callback_data: "lv" }, { text: "⬅️ Orqaga", callback_data: "m" }]] }).catch(() => {});
+    else await send(uid, t, { inline_keyboard: [[{ text: "🔄 Yangilash", callback_data: "lv" }, { text: "⬅️ Orqaga", callback_data: "m" }]] });
+    return true;
+  }
+  if (a === "ls" && mem) {
+    const p = await getPos(uid);
+    if (!p) { await send(uid, "Avval boshlanish nuqtasini tanlang 👇", { inline_keyboard: [[{ text: "📍 Tanlash", callback_data: "ps" }]] }); return true; }
+    await send(uid, "▶️ Qaysi vaqtda yodlaysiz?", { inline_keyboard: [
+      [{ text: SLOTS.fajr, callback_data: "lw:fajr" }],
+      [{ text: SLOTS.isha, callback_data: "lw:isha" }],
+      [{ text: SLOTS.other, callback_data: "lw:other" }],
+      [{ text: "⬅️ Orqaga", callback_data: "lm" }],
+    ] });
+    return true;
+  }
+  if (a.startsWith("lw:") && mem) { await send(uid, "Necha soat yodlaysiz?", hoursKb(`lh:${a.slice(3)}`, "ls")); return true; }
+  if (a.startsWith("lh:") && mem) { const [, slot, h] = a.split(":"); await liveStart(uid, name, slot, Number(h)); return true; }
+  if (a === "lc" && mem) { await send(uid, "🕒 Yangi tugash vaqti — hozirdan necha soat?", hoursKb("lt", "lm")); return true; }
+  if (a.startsWith("lt:") && mem) { await liveTime(uid, name, Number(a.slice(3))); return true; }
+  if (a === "lf" && mem) {
+    if (!(await liveOf(uid))) { await send(uid, "Hozir faol yodlash yo'q.", liveMenuKb(false)); return true; }
+    const pi = await planInfo(uid);
+    const rows: unknown[][] = [];
+    if (pi.today) rows.push([{ text: `✅ Reja: ${pi.today.from} → ${pi.today.to}`, callback_data: "lr:p" }]);
+    rows.push([{ text: "✍️ Boshqa oraliq yozaman", callback_data: "lr:x" }]);
+    rows.push([{ text: "➖ Hech narsa yodlamadim", callback_data: "lr:n" }]);
+    await send(uid, "⏹ Nimani yodladingiz?", { inline_keyboard: rows });
+    return true;
+  }
+  if (a.startsWith("lr:") && mem) {
+    const v = a.slice(3);
+    if (v === "x") { await setS("range"); await send(uid, "Oraliqni yozing.\nMasalan: <code>78:1 - 78:20</code> yoki <code>78 1 20</code>"); return true; }
+    let range: [number, number] | null = null;
+    if (v === "p") { const pi = await planInfo(uid); if (pi.today) range = [pi.today.fromId, pi.today.toId]; }
+    await setS("voice", { range });
+    await send(uid, "🎙 Ovozli xabar yuboring (yo'naltiruvchi eshitadi) yoki o'tkazib yuboring:", { inline_keyboard: [[{ text: "⏭ Ovozsiz yakunlash", callback_data: "lz" }]] });
+    return true;
+  }
+  if (a === "lz" && mem) {
+    const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).eq("state", "voice").maybeSingle();
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    await liveFinish(uid, name, s?.data?.range ?? null, null);
+    return true;
+  }
+
+  // xatolar
+  if (a === "xs" && mem) { await setS("mist", { target: uid }); await send(uid, "⚠️ Qaysi oyatda xato qildingiz?\nYozing: <code>78:5</code>\n(ixtiyoriy: so'z raqami va izoh — <code>78:5 3 bahona</code>)"); return true; }
+  if (a.startsWith("xm:") && circ) { const id = Number(a.slice(3)); await setS("mist", { target: id }); await send(uid, "⚠️ Qaysi oyatda xato? Yozing: <code>78:5</code>\n(ixtiyoriy: so'z raqami va izoh — <code>78:5 3 izoh</code>)"); return true; }
+  if (a.startsWith("xk:")) {
+    const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).eq("state", "mistk").maybeSingle();
+    if (!s) return true;
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    const d = s.data;
+    const m = await addMistake(uid, d.target, d.ayah, d.word ?? null, a.slice(3), d.note ?? null);
+    await send(uid, m ? `✅ Xato saqlandi: <b>${label(d.ayah)}</b>` : "Saqlanmadi.", menuKb(!!circ, !!mem));
+    return true;
+  }
+  if (a === "xl" && mem) {
+    const ms = await mistakeList(uid);
+    if (!ms.length) { await send(uid, "Ochiq xato yo'q 🎉", menuKb(!!circ, true)); return true; }
+    await send(uid, "📋 <b>Xatolarim</b>\n\n" + ms.map((m) => `• ${label(m.ayah)}${m.word ? `, ${m.word}-so'z` : ""} — ${KINDS[m.kind] ?? m.kind}${m.note ? ` (${esc(m.note)})` : ""}`).join("\n"),
+      { inline_keyboard: [...ms.slice(0, 10).map((m) => [{ text: `✅ Tuzatdim: ${label(m.ayah)}`, callback_data: `xf:${m.id}` }]), [{ text: "⬅️ Orqaga", callback_data: "pl" }]] });
+    return true;
+  }
+  if (a.startsWith("xf:") && mem) {
+    await sb.from("mistakes").update({ status: "fixed", fixed_at: new Date().toISOString() }).eq("id", Number(a.slice(3))).eq("tg_id", uid);
+    await send(uid, "✅ Tuzatildi, barakalla!", { inline_keyboard: [[{ text: "📋 Xatolarim", callback_data: "xl" }, { text: "⬅️ Menyu", callback_data: "m" }]] });
+    return true;
+  }
+  if (a.startsWith("xa:") && circ) {
+    const id = Number(a.slice(3));
+    const ms = await mistakeList(id);
+    await send(uid, ms.length ? "📋 <b>Ochiq xatolar</b>\n\n" + ms.map((m) => `• ${label(m.ayah)}${m.word ? `, ${m.word}-so'z` : ""} — ${KINDS[m.kind] ?? m.kind}${m.note ? ` (${esc(m.note)})` : ""}`).join("\n") : "Ochiq xato yo'q 🎉",
+      { inline_keyboard: [[{ text: "⚠️ Xato qo'shish", callback_data: `xm:${id}` }], [{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] });
+    return true;
+  }
+  if (a.startsWith("ap:") && circ) { // a'zo rejasi (admin ko'radi)
+    const id = Number(a.slice(3));
+    const pi = await planInfo(id);
+    await send(uid, planText(pi).replace("🗺 <b>Rejam</b>", "🗺 <b>A'zo rejasi</b>"), { inline_keyboard: [[{ text: "⬅️ Orqaga", callback_data: `as:${id}` }]] });
+    return true;
+  }
+  return false;
+}
+
+// matn / ovoz kiritish oqimlari (true — ishlov berildi)
+async function textPlus(uid: number, name: string, t: string, s: any): Promise<boolean> {
+  if (s.state === "pos") {
+    const id = parseAyah(t);
+    if (!id) { await send(uid, "Tushunmadim. Masalan: <code>78 1</code> yoki <code>bet 582</code>"); return true; }
+    const p = await getPos(uid);
+    await sb.from("sessions").delete().eq("tg_id", uid);
+    await setPos(uid, id, p?.dir === -1 ? -1 : 1);
+    const pi = await planInfo(uid);
+    await send(uid, "✅ Nuqta saqlandi.\n\n" + planText(pi), planKb(pi));
+    return true;
+  }
+  if (s.state === "range") {
+    const r = parseRange(t);
+    if (!r) { await send(uid, "Tushunmadim. Masalan: <code>78:1 - 78:20</code> yoki <code>78 1 20</code>"); return true; }
+    await sb.from("sessions").upsert({ tg_id: uid, state: "voice", data: { range: r } });
+    await send(uid, `📖 ${label(r[0])} → ${label(r[1])}\n\n🎙 Ovozli xabar yuboring yoki o'tkazib yuboring:`, { inline_keyboard: [[{ text: "⏭ Ovozsiz yakunlash", callback_data: "lz" }]] });
+    return true;
+  }
+  if (s.state === "mist") {
+    const m = parseMistake(t);
+    if (!m) { await send(uid, "Tushunmadim. Masalan: <code>78:5</code> yoki <code>78:5 3 izoh</code>"); return true; }
+    await sb.from("sessions").upsert({ tg_id: uid, state: "mistk", data: { ...s.data, ...m } });
+    await send(uid, `⚠️ ${label(m.ayah)} — xato turi?`, mistakeKindKb());
+    return true;
+  }
+  if (s.state === "voice") { await send(uid, "Ovozli xabar yuboring yoki «⏭ Ovozsiz yakunlash» ni bosing.", { inline_keyboard: [[{ text: "⏭ Ovozsiz yakunlash", callback_data: "lz" }]] }); return true; }
+  return false;
+}
+
+async function voicePlus(uid: number, name: string, fileId: string): Promise<boolean> {
+  const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).eq("state", "voice").maybeSingle();
+  if (!s) return false;
+  await sb.from("sessions").delete().eq("tg_id", uid);
+  await liveFinish(uid, name, s.data?.range ?? null, fileId);
+  return true;
+}
+
 // ---------- kiruvchi xabarlar ----------
 async function joinByCode(code: string, uid: number, name: string) {
   const { data: c } = await sb.from("circles").select("*").eq("join_code", code).maybeSingle();
@@ -706,6 +1197,7 @@ async function joinByCode(code: string, uid: number, name: string) {
 async function handleText(uid: number, name: string, t: string) {
   const { data: s } = await sb.from("sessions").select("*").eq("tg_id", uid).maybeSingle();
   if (!s) return showMenu(uid, name);
+  if (await textPlus(uid, name, t, s)) return;
   const n = Math.round(parseFloat(t.replace(",", ".")) * 100) / 100;
   if (!(n > 0 && n <= 100)) {
     return send(uid, "Iltimos, son yozing. Masalan: <code>2</code> yoki <code>1.5</code>");
@@ -722,6 +1214,9 @@ async function handleText(uid: number, name: string, t: string) {
 }
 
 async function handleMessage(msg: any) {
+  if (msg?.voice && msg.chat?.type === "private") {
+    if (await voicePlus(msg.from.id, msg.from.first_name ?? "Do'st", msg.voice.file_id)) return;
+  }
   if (!msg?.text || msg.chat?.type !== "private") return;
   const uid = msg.from.id;
   const name = msg.from.first_name ?? "Do'st";
@@ -1010,6 +1505,104 @@ async function rpc(req: Request) {
     case "join": {
       if (!admin) return forbid();
       await sb.from("members").upsert({ tg_id: uid, circle_id: circ.id, name }, { onConflict: "tg_id" });
+      return ok();
+    }
+    case "plan": {
+      const target = admin && body.id ? Number(body.id) : uid;
+      if (target !== uid && !(await memberInCircle(uid, target))) return forbid();
+      if (!(await memberOf(target))) return bad();
+      const pi = await planInfo(target);
+      const sa = (id: number) => fromId(id);
+      return json({
+        ...pi,
+        todayRef: pi.today ? { from: sa(pi.today.fromId), to: sa(pi.today.toId) } : null,
+        live: await liveOf(target) ? true : false,
+        slots: SLOTS,
+      });
+    }
+    case "plan_set": {
+      if (!mem) return forbid();
+      let id: number | null = null;
+      if (body.page) { const pg = Number(body.page); id = pg >= 1 && pg <= 604 ? PAGE_FIRST[pg - 1] : null; }
+      else { const su = Number(body.s), ay = Number(body.ay ?? 1); id = validSA(su, ay) ? ayahId(su, ay) : null; }
+      if (!id) return bad();
+      await setPos(uid, id, Number(body.dir) === -1 ? -1 : 1);
+      return ok();
+    }
+    case "plan_dir": {
+      if (!mem) return forbid();
+      const p = await getPos(uid);
+      if (!p) return bad();
+      await sb.from("positions").update({ dir: p.dir === 1 ? -1 : 1, week_ptr: p.ptr }).eq("tg_id", uid);
+      return ok();
+    }
+    case "live": {
+      const l = await liveList(circId);
+      const mine = mem ? await liveOf(uid) : null;
+      return json({ ...l, slots: SLOTS, mine: mine ? { slot: mine.slot, from: mine.win_from, to: mine.win_to } : null, isMember: !!mem });
+    }
+    case "live_start": {
+      if (!mem) return forbid();
+      const h = numIn(body.hours, 12), slot = SLOTS[String(body.slot)] ? String(body.slot) : "other";
+      if (!h) return bad();
+      if (!(await getPos(uid))) return json({ error: "no_position" }, 400);
+      await liveStart(uid, name, slot, h, true);
+      return ok();
+    }
+    case "live_time": {
+      if (!mem) return forbid();
+      const h = numIn(body.hours, 12);
+      if (!h) return bad();
+      await liveTime(uid, name, h, true);
+      return ok();
+    }
+    case "live_finish": {
+      if (!mem) return forbid();
+      let range: [number, number] | null = null;
+      if (body.mode === "plan") {
+        const pi = await planInfo(uid);
+        if (pi.today) range = [pi.today.fromId, pi.today.toId];
+      } else if (body.mode === "range") {
+        const f = body.from ?? [], t = body.to ?? [];
+        if (!validSA(Number(f[0]), Number(f[1])) || !validSA(Number(t[0]), Number(t[1]))) return bad();
+        const a = ayahId(Number(f[0]), Number(f[1])), b = ayahId(Number(t[0]), Number(t[1]));
+        if (b < a) return bad();
+        range = [a, b];
+      }
+      await liveFinish(uid, name, range, null, true);
+      return ok();
+    }
+    case "mist_list": {
+      const target = admin && body.id ? Number(body.id) : uid;
+      if (target !== uid && !(await memberInCircle(uid, target))) return forbid();
+      const { data } = await sb.from("mistakes").select("*").eq("tg_id", target)
+        .order("created_at", { ascending: false }).limit(60);
+      return json({
+        kinds: KINDS,
+        items: (data ?? []).map((m) => {
+          const [su, ay] = fromId(m.ayah);
+          return { id: m.id, ref: label(m.ayah), s: su, a: ay, word: m.word, kind: m.kind, note: m.note, status: m.status, byAdmin: m.by_id !== m.tg_id, day: String(m.created_at).slice(0, 10) };
+        }),
+      });
+    }
+    case "mist_add": {
+      const target = admin && body.id ? Number(body.id) : uid;
+      if (target !== uid && !(await memberInCircle(uid, target))) return forbid();
+      if (!(await memberOf(target))) return forbid();
+      const su = Number(body.s), ay = Number(body.ay);
+      if (!validSA(su, ay)) return bad();
+      const word = body.word ? Math.min(999, Math.max(1, Number(body.word) | 0)) : null;
+      const note = body.note ? String(body.note).slice(0, 200) : null;
+      await addMistake(uid, target, ayahId(su, ay), word, String(body.kind ?? "other"), note);
+      return ok();
+    }
+    case "mist_fix": {
+      const id = Number(body.id);
+      if (!id) return bad();
+      const { data: m } = await sb.from("mistakes").select("tg_id,circle_id").eq("id", id).maybeSingle();
+      if (!m || (m.tg_id !== uid && m.circle_id !== circId)) return forbid();
+      if (m.tg_id !== uid && !admin) return forbid();
+      await sb.from("mistakes").update({ status: "fixed", fixed_at: new Date().toISOString() }).eq("id", id);
       return ok();
     }
     default:
