@@ -2,130 +2,314 @@
 <html lang="uz">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Hifz Tracker</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  :root {
-    --bg: #f6f4ee; --card: #ffffff; --ink: #1d2b24; --muted: #6b7a72;
-    --green: #1f7a54; --green-soft: #dff1e8; --gold: #c8932b; --line: #e4e0d4; --empty: #e9e6db;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #111a16; --card: #19251f; --ink: #eaf1ec; --muted: #8fa398;
-      --green: #3fc48a; --green-soft: #1f3a2d; --gold: #e0b052; --line: #263a30; --empty: #263a30; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink);
-    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
-  h1 { font-size: 22px; margin: 4px 0 2px; }
-  .sub { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
-  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; text-align: center; }
-  .stat b { display: block; font-size: 24px; color: var(--green); }
-  .stat span { font-size: 12px; color: var(--muted); }
-  .m { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
-  .top { display: flex; align-items: center; gap: 10px; }
-  .name { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :root { --bg:#f6f4ee; --card:#fff; --ink:#1d2b24; --muted:#6b7a72; --green:#1f7a54; --green-soft:#dff1e8;
+    --gold:#c8932b; --line:#e4e0d4; --empty:#e9e6db; }
+  :root[data-theme="dark"] { --bg:#111a16; --card:#19251f; --ink:#eaf1ec; --muted:#8fa398; --green:#3fc48a;
+    --green-soft:#1f3a2d; --gold:#e0b052; --line:#263a30; --empty:#263a30; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#111a16; --card:#19251f; --ink:#eaf1ec;
+    --muted:#8fa398; --green:#3fc48a; --green-soft:#1f3a2d; --gold:#e0b052; --line:#263a30; --empty:#263a30; } }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  #app { max-width: 640px; margin: 0 auto; padding: 16px 16px 96px; }
+  h1 { font-size: 20px; margin: 2px 0; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; }
+  .card.tap { cursor: pointer; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .row + .row { margin-top: 6px; }
   .num { font-weight: 700; color: var(--green); white-space: nowrap; }
   .bar { position: relative; height: 12px; background: var(--empty); border-radius: 99px; overflow: hidden; margin: 10px 0 6px; }
   .bar i { position: absolute; top: 0; left: 0; height: 100%; }
-  .bar .p { background: var(--gold); }
-  .bar .a { background: var(--green); }
+  .bar .a { background: var(--green); } .bar .p { background: var(--gold); }
   .bar .e { background: transparent; border-right: 2px solid var(--ink); opacity: .45; }
-  .meta { font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+  .meta { font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+  .meta a { color: var(--green); text-decoration: none; }
   .ok { color: var(--green); } .warn { color: var(--gold); }
+  .banner { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--green-soft); color: var(--green); font-size: 14px; font-weight: 600; }
+  .tip { background: var(--green-soft); color: var(--green); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; font-size: 14px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px; text-align: center; }
+  .stat b { display: block; font-size: 22px; color: var(--green); } .stat span { font-size: 11px; color: var(--muted); }
+  .actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .actions .btn { flex: 1; }
+  .btn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 12px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  .btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
+  .btn.wide { width: 100%; margin-top: 8px; }
+  .btn:active { opacity: .7; }
+  .seg { display: flex; gap: 6px; margin-bottom: 10px; }
+  .seg button { flex: 1; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 8px; font: inherit; font-size: 14px; }
+  .seg button.on { background: var(--green); color: #fff; border-color: var(--green); }
   .msg { text-align: center; color: var(--muted); padding: 40px 10px; }
-  code { background: var(--empty); padding: 1px 6px; border-radius: 6px; }
+  nav.nav { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  nav.nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 8px 2px 10px; font: inherit; font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  nav.nav button.on { color: var(--green); font-weight: 700; } nav.nav .ic { font-size: 20px; }
+  .ov { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; z-index: 10; }
+  .sheet { background: var(--bg); width: 100%; max-width: 640px; margin: 0 auto; border-radius: 18px 18px 0 0; padding: 16px 16px calc(20px + env(safe-area-inset-bottom)); max-height: 85vh; overflow: auto; }
+  .sheet .x { border: 0; background: var(--empty); color: var(--ink); width: 30px; height: 30px; border-radius: 50%; font-size: 14px; }
+  .chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
+  .chip { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 12px 0; font: inherit; font-weight: 600; }
+  .custom { display: flex; gap: 8px; } .custom input { flex: 1; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 12px; padding: 12px; font: inherit; }
+  .link { word-break: break-all; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 13px; margin: 10px 0; user-select: all; }
+  #toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; max-width: 90%; text-align: center; }
+  #toast.show { opacity: 1; }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>🌙 Hifz Tracker</h1>
-  <div class="sub" id="sub">Yuklanmoqda…</div>
-  <div id="app"></div>
-</div>
+<div id="app"></div>
+<div id="toast"></div>
 
 <script>
-const API = "https://fsmfhyustigomtvtnevo.supabase.co/functions/v1/hifz-bot/api";
-const code = new URLSearchParams(location.search).get("c");
-const app = document.getElementById("app");
-const sub = document.getElementById("sub");
+const RPC = "https://fsmfhyustigomtvtnevo.supabase.co/functions/v1/hifz-bot/rpc";
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); if (tg.colorScheme) document.documentElement.dataset.theme = tg.colorScheme; }
+const $app = document.getElementById("app");
 
-function el(tag, cls, txt) {
+const NUMS = [0.5, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 12];
+const MEDALS = ["🥇", "🥈", "🥉"];
+const fmt = n => { const r = Math.round(n * 100) / 100, w = Math.floor(r); if (Math.abs(r - w - 0.5) < 1e-9) return w ? w + "½" : "½"; return String(r); };
+
+function h(tag, props, ...kids) {
   const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (txt !== undefined) e.textContent = txt;
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
   return e;
 }
-const fmt = n => String(Math.round(n * 100) / 100).replace(".5", "½").replace(/^0½$/, "½");
 
-function message(html) {
-  app.replaceChildren();
-  const d = el("div", "msg");
-  d.innerHTML = html;
-  app.append(d);
+async function rpc(a, p = {}) {
+  const r = await fetch(RPC, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ initData: tg.initData, a, ...p }) });
+  const j = await r.json().catch(() => ({ error: "server" }));
+  if (!r.ok || j.error) throw new Error(j.error || "server");
+  return j;
 }
 
-async function load() {
-  if (!code) {
-    sub.textContent = "";
-    return message("Havola to'liq emas.<br>Botda yo'naltiruvchi menyusidagi <code>🌐 Sayt</code> tugmasini bosing.");
-  }
+let toastT;
+function toast(t) {
+  const el = document.getElementById("toast");
+  el.textContent = t; el.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+function bar(done, pending, goal, expected) {
+  const pct = v => Math.max(0, Math.min(100, goal ? (v / goal) * 100 : 0));
+  const a = h("i", { class: "a" }), p = h("i", { class: "p" }), b = h("div", { class: "bar" }, a, p);
+  a.style.width = pct(done) + "%";
+  p.style.left = pct(done) + "%"; p.style.width = Math.min(100 - pct(done), pct(pending || 0)) + "%";
+  if (expected) { const e = h("i", { class: "e" }); e.style.width = pct(expected) + "%"; b.append(e); }
+  return b;
+}
+
+function ltInfo(lt) {
+  const out = [];
+  if (lt.plan) out.push(["📆 Yillik", fmt(lt.plan.juz) + " juz — " + fmt(lt.plan.approved) + "/" + fmt(lt.plan.pages) + " (" + Math.round(lt.plan.approved / lt.plan.pages * 100) + "%), " + lt.plan.weeksLeft + " hafta qoldi", lt.plan.approved, lt.plan.pages]);
+  if (lt.month) out.push(["🗓 " + lt.month.name + (lt.month.manual ? " ✍️" : ""), fmt(lt.month.approved) + " / " + fmt(lt.month.target) + " sahifa", lt.month.approved, lt.month.target]);
+  return out;
+}
+
+// ---------- pastdan chiqadigan oynalar ----------
+function openSheet(title, build) {
+  const close = () => ov.remove();
+  const ov = h("div", { class: "ov", onclick: e => { if (e.target === ov) close(); } },
+    h("div", { class: "sheet" }, h("div", { class: "row" }, h("b", {}, title), h("button", { class: "x", onclick: close }, "✕")), build(close)));
+  document.body.append(ov);
+}
+
+function numberSheet({ title, nums, max = 100, hint, suggest, extras = [], onPick }) {
+  openSheet(title, close => {
+    const wrap = h("div");
+    const pick = async v => { close(); await onPick(v); };
+    if (suggest) wrap.append(h("button", { class: "btn primary wide", onclick: () => pick(suggest) }, "💡 Tavsiya: " + fmt(suggest)));
+    wrap.append(h("div", { class: "chips" }, nums.map(n => h("button", { class: "chip", onclick: () => pick(n) }, fmt(n)))));
+    const inp = h("input", { type: "number", inputmode: "decimal", step: "0.5", min: "0", max: String(max), placeholder: "Boshqa son" });
+    wrap.append(h("div", { class: "custom" }, inp, h("button", { class: "btn", onclick: () => {
+      const n = Math.round(parseFloat(String(inp.value).replace(",", ".")) * 100) / 100;
+      if (!(n > 0 && n <= max)) return toast("Son noto'g'ri");
+      pick(n);
+    } }, "OK")));
+    extras.forEach(([label, fn]) => wrap.append(h("button", { class: "btn wide", onclick: () => { close(); fn(); } }, label)));
+    if (hint) wrap.append(h("div", { class: "meta" }, hint));
+    return wrap;
+  });
+}
+
+// ---------- amallar ----------
+let S = { me: null, tab: null, scope: "w" };
+async function reload() { S.me = await rpc("me"); await render(); }
+async function act(a, p, okMsg) {
+  try { await rpc(a, p); toast(okMsg || "✅"); await reload(); }
+  catch (e) { toast("Xato: " + e.message); }
+}
+
+const reportFlow = () => numberSheet({ title: "📖 Necha sahifa yodladingiz?", nums: [0.5, 1, 1.5, 2, 3, 4, 5],
+  hint: "Yo'naltiruvchiga yuboriladi, u tekshirib tasdiqlaydi.",
+  onPick: v => act("report", { pages: v }, "📨 Yuborildi, yo'naltiruvchi tekshiradi") });
+
+const goalFlow = () => numberSheet({ title: "🎯 Bu hafta necha sahifa yodlaysiz?", nums: NUMS,
+  suggest: S.me.my.lt.suggest, hint: "Yo'naltiruvchiga yuboriladi, u tasdiqlaydi.",
+  onPick: v => act("request", { pages: v }, "📨 Maqsad yuborildi") });
+
+// ---------- ko'rinishlar ----------
+async function homeView() {
+  const my = S.me.my, root = h("div");
+  root.append(h("div", { class: "actions" },
+    h("button", { class: "btn primary", onclick: reportFlow }, "📖 Yodladim"),
+    h("button", { class: "btn", onclick: goalFlow }, "🎯 Haftalik maqsad")));
+
+  const card = h("div", { class: "card" },
+    h("div", { class: "row" }, h("b", {}, "Haftalik maqsad"), h("span", { class: "num" }, my.goal ? fmt(my.approved) + " / " + fmt(my.goal) : "reja yo'q")));
+  if (my.goal) {
+    const left = Math.max(0, my.goal - my.approved - my.pending);
+    const behind = my.approved + my.pending + 1e-9 < my.expected;
+    card.append(bar(my.approved, my.pending, my.goal, my.expected),
+      h("div", { class: "meta" },
+        h("span", { class: behind ? "warn" : "ok" }, behind ? "⚠️ Rejadan orqada" : "👍 Reja bo'yicha"),
+        h("span", {}, "Qoldi: " + fmt(left)),
+        my.pending ? h("span", {}, "⏳ Tekshirilmoqda: " + fmt(my.pending)) : null));
+    if (my.approved + 1e-9 >= my.goal) card.append(h("div", { class: "banner" }, "🎉 Haftalik maqsad bajarildi! 🏖️ Qolgan kunlar izin"));
+  } else card.append(h("div", { class: "meta" }, "«Haftalik maqsad» tugmasi bilan yo'naltiruvchiga yuboring"));
+  root.append(card);
+
+  ltInfo(my.lt).forEach(([t, v, d, g]) => root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("b", {}, t), h("span", { class: "num" }, g ? Math.round(d / g * 100) + "%" : "")),
+    bar(d, 0, g), h("div", { class: "meta" }, v))));
+  if (my.lt.suggest) root.append(h("div", { class: "tip" }, "💡 Tavsiya etilgan haftalik: " + fmt(my.lt.suggest) + " sahifa"));
+
+  root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("span", {}, "🏅 Hamma vaqt"), h("b", {}, fmt(my.allTime) + " sahifa")),
+    h("div", { class: "row" }, h("span", {}, "🏆 Bajarilgan haftalar"), h("b", {}, String(my.rec.total))),
+    h("div", { class: "row" }, h("span", {}, "🔥 Hafta seriyasi"), h("b", {}, String(my.rec.streak)))));
+  return root;
+}
+
+async function rankView() {
+  const d = await rpc("ranking", { scope: S.scope }), root = h("div");
+  root.append(h("div", { class: "seg" }, [["w", "📅 Hafta"], ["m", "🗓 Oy"], ["y", "📆 Yil"]].map(([k, l]) =>
+    h("button", { class: k === S.scope ? "on" : "", onclick: () => { S.scope = k; render(); } }, l))));
+  root.append(h("div", { class: "sub" }, d.title + " · maqsadga nisbatan"));
+  if (!d.rows.length) root.append(h("div", { class: "msg" }, "Hali reja belgilanmagan."));
+  d.rows.forEach((r, i) => root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("b", {}, (MEDALS[i] || (i + 1) + ".") + " " + r.name), h("span", { class: "num" }, r.pct + "%")),
+    bar(r.done, 0, r.goal),
+    h("div", { class: "meta" }, fmt(r.done) + " / " + fmt(r.goal) + " sahifa" + (r.done + 1e-9 >= r.goal ? " 🎉" : "")))));
+  if (d.none.length) root.append(h("div", { class: "meta" }, "Reja yo'q: " + d.none.join(", ")));
+  return root;
+}
+
+async function pendingView() {
+  const d = await rpc("pending");
+  if (!d.items.length) return h("div", { class: "msg" }, "Tekshiradigan hisobot yo'q 👍");
+  const root = h("div");
+  d.items.forEach(r => root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("b", {}, r.name), h("span", { class: "num" }, fmt(r.pages) + " sahifa")),
+    h("div", { class: "meta" }, "📅 " + r.day, h("a", { href: "tg://user?id=" + r.tg_id }, "👤 profil")),
+    h("div", { class: "actions", style: "margin:10px 0 0" },
+      h("button", { class: "btn primary", onclick: () => act("decide", { id: r.id, status: "approved" }, "✅ Tasdiqlandi") }, "✅ Tasdiqlash"),
+      h("button", { class: "btn", onclick: () => act("decide", { id: r.id, status: "repeat" }, "🔁 Qayta so'raldi") }, "🔁 Qayta")))));
+  return root;
+}
+
+function memberSheet(m) {
+  openSheet(m.name, close => {
+    const w = h("div", { style: "margin-top:10px" });
+    w.append(h("div", { class: "card" },
+      h("div", { class: "row" }, h("span", {}, "🎯 Bu hafta"), h("b", {}, m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q")),
+      ...ltInfo(m.lt).map(([t, v]) => h("div", { class: "row" }, h("span", {}, t), h("b", {}, v)))));
+    if (m.lt.suggest) w.append(h("button", { class: "btn primary wide", onclick: () => { close(); act("setgoal", { id: m.id, pages: m.lt.suggest }, "✅ Haftalik belgilandi"); } },
+      "💡 Tavsiya: haftalik " + fmt(m.lt.suggest) + " sahifa"));
+    w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🎯 " + m.name + ": bu hafta necha sahifa?", nums: NUMS,
+      onPick: v => act("setgoal", { id: m.id, pages: v }, "✅ Haftalik belgilandi") }); } }, "🎯 Haftalik belgilash"));
+    w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "📅 " + m.name + ": shu oy necha juz?", nums: [0.5, 1, 1.5, 2, 2.5, 3, 4, 5], max: 30,
+      hint: "Odatda yillikdan avtomatik hisoblanadi.",
+      extras: [["♻️ Avtomatik hisob", () => act("setmonth", { id: m.id, juz: null }, "♻️ Avtomatik hisobga qaytdi")]],
+      onPick: v => act("setmonth", { id: m.id, juz: v }, "✅ Oylik belgilandi") }); } }, "📅 Oylik (juz)"));
+    w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🗓 " + m.name + ": yillik necha juz?", nums: [1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 25, 30], max: 30,
+      hint: "1 juz = 20 sahifa. Reja 52 hafta davom etadi.",
+      onPick: v => act("setyear", { id: m.id, juz: v }, "✅ Yillik reja belgilandi") }); } }, "🗓 Yillik (juz)"));
+    return w;
+  });
+}
+
+async function inviteFlow() {
   try {
-    const r = await fetch(API + "?c=" + encodeURIComponent(code));
-    if (r.status === 404) return message("Halqa topilmadi. Botdan yangi havola oling.");
-    if (!r.ok) throw new Error();
-    render(await r.json());
-  } catch (e) {
-    message("Ma'lumot yuklanmadi. Birozdan keyin qayta urinib ko'ring.");
+    const { link } = await rpc("invite");
+    openSheet("🔗 Taklif havolasi", () => h("div", {},
+      h("div", { class: "meta" }, "Shuni a'zolarga yuboring, bosganda halqaga qo'shiladilar:"),
+      h("div", { class: "link" }, link),
+      h("button", { class: "btn primary wide", onclick: () => tg.openTelegramLink("https://t.me/share/url?url=" + encodeURIComponent(link) + "&text=" + encodeURIComponent("Hifz halqasiga qo'shiling 🌙")) }, "📤 Telegramda ulashish")));
+  } catch (e) { toast("Xato: " + e.message); }
+}
+
+async function membersView() {
+  const d = await rpc("members"), root = h("div");
+  const total = d.members.reduce((s, m) => s + m.approved, 0), withGoal = d.members.filter(m => m.goal > 0).length;
+  root.append(h("div", { class: "stats" },
+    h("div", { class: "stat" }, h("b", {}, String(d.members.length)), h("span", {}, "a'zo")),
+    h("div", { class: "stat" }, h("b", {}, withGoal + "/" + d.members.length), h("span", {}, "reja bor")),
+    h("div", { class: "stat" }, h("b", {}, fmt(total)), h("span", {}, "tasdiqlangan"))));
+  root.append(h("div", { class: "actions" },
+    h("button", { class: "btn", onclick: inviteFlow }, "🔗 Taklif havolasi"),
+    S.me.isMember ? null : h("button", { class: "btn", onclick: () => act("join", {}, "✅ Siz ham a'zosiz") }, "➕ Men ham a'zoman")));
+  if (!d.members.length) root.append(h("div", { class: "msg" }, "Hali a'zolar yo'q. Taklif havolasini yuboring."));
+  d.members.forEach(m => {
+    const c = h("div", { class: "card tap", onclick: () => memberSheet(m) },
+      h("div", { class: "row" }, h("b", {}, m.name), h("span", { class: "num" }, m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q")));
+    if (m.goal) c.append(bar(m.approved, m.pending, m.goal, m.expected));
+    const info = ltInfo(m.lt).map(x => x[0] + ": " + x[1]);
+    if (m.pending) info.unshift("⏳ " + fmt(m.pending));
+    if (info.length) c.append(h("div", { class: "meta" }, info.map(t => h("span", {}, t))));
+    root.append(c);
+  });
+  return root;
+}
+
+// ---------- asosiy ----------
+const VIEWS = { home: homeView, rank: rankView, pending: pendingView, members: membersView };
+let R = 0;
+function tabs() {
+  const t = [];
+  if (S.me.isMember) t.push(["home", "📊", "Natijam"]);
+  t.push(["rank", "🏆", "Reyting"]);
+  if (S.me.isAdmin) {
+    t.push(["pending", "⏳", "Tekshirish" + (S.me.pendingCount ? " (" + S.me.pendingCount + ")" : "")]);
+    t.push(["members", "👥", "A'zolar"]);
   }
+  return t;
+}
+async function render() {
+  const my = ++R;
+  const nav = h("nav", { class: "nav" }, tabs().map(([id, ic, lb]) =>
+    h("button", { class: id === S.tab ? "on" : "", onclick: () => { S.tab = id; render(); } }, h("span", { class: "ic" }, ic), h("span", {}, lb))));
+  const body = h("div", {}, h("div", { class: "msg" }, "Yuklanmoqda…"));
+  $app.replaceChildren(
+    h("h1", {}, "🌙 Hifz Tracker"),
+    h("div", { class: "sub" }, S.me.name + (S.me.isAdmin ? " · yo'naltiruvchi" : "")),
+    body, nav);
+  try {
+    const view = await VIEWS[S.tab]();
+    if (my === R) body.replaceChildren(view);
+  } catch (e) { if (my === R) body.replaceChildren(h("div", { class: "msg" }, "Yuklanmadi: " + e.message)); }
 }
 
-function render(d) {
-  const ms = d.members;
-  const withGoal = ms.filter(m => m.goal > 0).length;
-  const approved = ms.reduce((s, m) => s + m.approved, 0);
+function showMsg(html) { $app.replaceChildren(h("h1", {}, "🌙 Hifz Tracker")); const d = h("div", { class: "msg" }); d.innerHTML = html; $app.append(d); }
 
-  sub.textContent = "Hafta boshlanishi: " + d.week_start;
-  app.replaceChildren();
-
-  const stats = el("div", "stats");
-  [[ms.length, "a'zo"], [withGoal + "/" + ms.length, "reja belgilangan"], [fmt(approved), "tasdiqlangan sahifa"]].forEach(([v, l]) => {
-    const s = el("div", "stat"); s.append(el("b", "", v), el("span", "", l)); stats.append(s);
-  });
-  app.append(stats);
-
-  if (!ms.length) return app.append(el("div", "msg", "Hali a'zolar yo'q."));
-
-  const medals = ["🥇", "🥈", "🥉"];
-  ms.forEach((m, i) => {
-    const card = el("div", "m");
-    const top = el("div", "top");
-    top.append(el("div", "name", (medals[i] || (i + 1) + ".") + " " + m.name),
-      el("div", "num", m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q"));
-    card.append(top);
-    if (m.goal) {
-      const bar = el("div", "bar");
-      const a = el("i", "a"); a.style.width = Math.min(100, m.approved / m.goal * 100) + "%";
-      const p = el("i", "p"); p.style.left = Math.min(100, m.approved / m.goal * 100) + "%";
-      p.style.width = Math.min(100 - Math.min(100, m.approved / m.goal * 100), m.pending / m.goal * 100) + "%";
-      const e = el("i", "e"); e.style.width = Math.min(100, m.expected / m.goal * 100) + "%";
-      bar.append(a, p, e);
-      const meta = el("div", "meta");
-      const behind = m.approved + m.pending + 1e-9 < m.expected;
-      meta.append(
-        el("span", behind ? "warn" : "ok", behind ? "⚠️ Rejadan orqada" : "👍 Reja bo'yicha"),
-        el("span", "", "Bugungacha kerak: " + fmt(m.expected)),
-      );
-      if (m.pending) meta.append(el("span", "", "⏳ Tekshirilmoqda: " + fmt(m.pending)));
-      card.append(bar, meta);
-    }
-    app.append(card);
-  });
-}
-
-load();
-setInterval(load, 60000);
+(async function boot() {
+  if (!tg || !tg.initData) return showMsg("Bu sahifa Telegram ichida ochiladi.<br>Botda <b>🌐 Sayt</b> tugmasini bosing.");
+  try { S.me = await rpc("me"); }
+  catch (e) {
+    return showMsg(e.message === "auth" ? "Sessiya eskirgan. Saytni Telegramdan qayta oching."
+      : e.message === "no_circle" ? "Siz hali halqaga qo'shilmagansiz.<br>Yo'naltiruvchidan taklif havolasini so'rang."
+      : "Yuklanmadi. Birozdan keyin qayta urinib ko'ring.");
+  }
+  S.tab = S.me.isMember ? "home" : (S.me.isAdmin ? "pending" : "rank");
+  render();
+})();
 </script>
 </body>
 </html>

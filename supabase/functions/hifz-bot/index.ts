@@ -19,7 +19,7 @@ function serviceKey(): string {
 const sb = createClient(SB_URL, serviceKey());
 
 // ---------- umumiy yordamchilar ----------
-const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*" };
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS" };
 const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 const text = (s: string, status = 200) =>
@@ -92,6 +92,7 @@ async function ensureCommands() {
   if (commandsSet) return;
   commandsSet = true;
   await tg("setMyCommands", { commands: [{ command: "menyu", description: "Tugmalarni ochish" }] });
+  await tg("setChatMenuButton", { menu_button: { type: "web_app", text: "🌐 Sayt", web_app: { url: SITE } } });
 }
 
 // ---------- ma'lumotlar ----------
@@ -241,6 +242,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
     ]);
   }
   if (isMem || isAdmin) rows.push([{ text: "🏆 Reyting", callback_data: "top:w" }]);
+  if (isMem && !isAdmin) rows.push([{ text: "🌐 Sayt", web_app: { url: SITE } }]);
   if (isAdmin) {
     rows.push([{ text: `⏳ Tekshirish${pending ? ` (${pending})` : ""}`, callback_data: "ap" }]);
     rows.push([
@@ -249,7 +251,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
     ]);
     rows.push([
       { text: "🔗 Taklif havolasi", callback_data: "inv" },
-      { text: "🌐 Sayt", callback_data: "site" },
+      { text: "🌐 Sayt", web_app: { url: SITE } },
     ]);
     if (!isMem) rows.push([{ text: "➕ Men ham a'zoman", callback_data: "join" }]);
   }
@@ -308,7 +310,7 @@ const lineFor = (name: string, s: St) =>
   `${s.pending ? ` ⏳${fmt(s.pending)}` : ""} / ${s.goal ? fmt(s.goal) : "reja yo'q"}`;
 
 // ---------- amallar ----------
-async function createReport(uid: number, name: string, pages: number) {
+async function createReport(uid: number, name: string, pages: number, quiet = false) {
   const mem = await memberOf(uid);
   if (!mem) return showMenu(uid, name);
   const circ = await circleById(mem.circle_id);
@@ -323,11 +325,12 @@ async function createReport(uid: number, name: string, pages: number) {
       { text: "✅ Tasdiqlash", callback_data: `ok:${r.id}` },
       { text: "🔁 Qayta", callback_data: `rt:${r.id}` },
     ]] });
+  if (quiet) return;
   return send(uid, `📨 Yuborildi: <b>${fmt(pages)}</b> sahifa.\nYo'naltiruvchi tekshirib, tasdiqlaydi ✅`,
     menuKb(!!(await circleOfAdmin(uid)), true));
 }
 
-async function sendRequest(uid: number, name: string, pages: number) {
+async function sendRequest(uid: number, name: string, pages: number, quiet = false) {
   const mem = await memberOf(uid);
   if (!mem) return showMenu(uid, name);
   const circ = await circleById(mem.circle_id);
@@ -338,18 +341,19 @@ async function sendRequest(uid: number, name: string, pages: number) {
       { text: "✅ Qabul qilish", callback_data: `ga:${uid}:${pages}` },
       { text: "✏️ O'zgartirish", callback_data: `as:${uid}` },
     ]] });
+  if (quiet) return;
   return send(uid, `📨 Maqsadingiz yuborildi: <b>${fmt(pages)}</b> sahifa.\nYo'naltiruvchi tasdiqlaydi.`,
     menuKb(!!(await circleOfAdmin(uid)), true));
 }
 
-async function setGoal(adminUid: number, memberId: number, pages: number) {
+async function setGoal(adminUid: number, memberId: number, pages: number, quiet = false) {
   const circ = await circleOfAdmin(adminUid);
   if (!circ) return;
   const { data: m } = await sb.from("members").select("*").eq("tg_id", memberId).eq("circle_id", circ.id).maybeSingle();
   if (!m) return send(adminUid, "A'zo topilmadi.");
   await sb.from("goals").upsert({ tg_id: memberId, week_start: weekStart(), pages }, { onConflict: "tg_id,week_start" });
   const mem = await memberOf(adminUid);
-  await send(adminUid, `✅ <b>${esc(m.name)}</b> uchun bu hafta: <b>${fmt(pages)}</b> sahifa`, menuKb(true, !!mem));
+  if (!quiet) await send(adminUid, `✅ <b>${esc(m.name)}</b> uchun bu hafta: <b>${fmt(pages)}</b> sahifa`, menuKb(true, !!mem));
   if (memberId !== adminUid) {
     await send(memberId,
       `🎯 Sizga bu hafta <b>${fmt(pages)}</b> sahifa belgilandi (kuniga ~${fmt(pages / 6)}).\nShanbagacha ezberlang, barakalla! 🌙`,
@@ -403,7 +407,7 @@ async function memberInCircle(adminUid: number, memberId: number) {
   return m;
 }
 
-async function setYear(adminUid: number, memberId: number, juz: number) {
+async function setYear(adminUid: number, memberId: number, juz: number, quiet = false) {
   const m = await memberInCircle(adminUid, memberId);
   if (!m) return send(adminUid, "A'zo topilmadi.");
   await sb.from("plans").upsert({ tg_id: memberId, juz, start_date: weekStart(), weeks: 52 }, { onConflict: "tg_id" });
@@ -414,11 +418,12 @@ async function setYear(adminUid: number, memberId: number, juz: number) {
       `${lt.suggest ? `\n💡 Haftalik taxminiy: <b>${fmt(lt.suggest)}</b> sahifa` : ""}\nInsha'Allah, barakali bo'lsin! 🌙`,
       await kbFor(memberId));
   }
+  if (quiet) return;
   await send(adminUid, `✅ <b>${esc(m.name)}</b> uchun yillik reja: <b>${fmt(juz)}</b> juz`);
   return act(`as:${memberId}`, adminUid, "");
 }
 
-async function setMonth(adminUid: number, memberId: number, juz: number | null) {
+async function setMonth(adminUid: number, memberId: number, juz: number | null, quiet = false) {
   const m = await memberInCircle(adminUid, memberId);
   if (!m) return send(adminUid, "A'zo topilmadi.");
   const key = day().slice(0, 7);
@@ -434,6 +439,7 @@ async function setMonth(adminUid: number, memberId: number, juz: number | null) 
       `${lt.suggest ? `\n💡 Haftalik taxminiy: <b>${fmt(lt.suggest)}</b> sahifa` : ""}`,
       await kbFor(memberId));
   }
+  if (quiet) return;
   await send(adminUid, juz === null
     ? `♻️ <b>${esc(m.name)}</b>: oylik maqsad avtomatik hisobga qaytdi`
     : `✅ <b>${esc(m.name)}</b>: shu oy <b>${fmt(juz)}</b> juz`);
@@ -507,7 +513,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "site") {
     if (!circ) return;
-    return send(uid, `🌐 Sayt:\n${SITE}?c=${circ.view_code}`, menuKb(true, isMem));
+    return send(uid, "🌐 Saytni ochish 👇", { inline_keyboard: [[{ text: "🌐 Sayt", web_app: { url: SITE } }]] });
   }
 
   if (a === "join") {
@@ -819,6 +825,192 @@ select cron.schedule('hifz-weekly', '5 16 * * 6', $$
 $$);`;
 }
 
+// ---------- sayt (Telegram Mini App) uchun xavfsiz API ----------
+async function hmacBytes(key: Uint8Array, data: string) {
+  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(data)));
+}
+
+// Telegram initData imzosini tekshiradi: foydalanuvchini soxtalashtirib bo'lmaydi
+async function verifyInit(initData: string): Promise<{ uid: number; name: string } | null> {
+  const p = new URLSearchParams(initData);
+  const hash = p.get("hash");
+  if (!hash) return null;
+  p.delete("hash");
+  const dcs = [...p.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`).join("\n");
+  const secret = await hmacBytes(new TextEncoder().encode("WebAppData"), BOT);
+  const sig = [...(await hmacBytes(secret, dcs))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (sig !== hash) return null;
+  if (Date.now() / 1000 - Number(p.get("auth_date") ?? 0) > 86400) return null;
+  try {
+    const u = JSON.parse(p.get("user") ?? "null");
+    return u?.id ? { uid: Number(u.id), name: String(u.first_name ?? "Do'st") } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function rankingData(circId: number, scope: string) {
+  const { data: ms } = await sb.from("members").select("*").eq("circle_id", circId);
+  const list = ms ?? [];
+  const rows: { name: string; goal: number; done: number; pct: number }[] = [];
+  const none: string[] = [];
+  let title = "";
+  if (scope === "w") {
+    title = `Hafta (${weekStart()})`;
+    const st = await statsFor(list.map((m) => m.tg_id), weekStart());
+    for (const m of list) {
+      const s = st.get(m.tg_id)!;
+      if (s.goal) rows.push({ name: m.name, goal: s.goal, done: s.approved, pct: 0 }); else none.push(m.name);
+    }
+  } else {
+    for (const m of list) {
+      const lt = await longTerm(m.tg_id);
+      const t = scope === "m"
+        ? (lt.month ? { goal: lt.month.target, done: lt.month.approved } : null)
+        : (lt.plan ? { goal: lt.plan.pages, done: lt.plan.approved } : null);
+      if (t && t.goal > 0) rows.push({ name: m.name, ...t, pct: 0 }); else none.push(m.name);
+    }
+    title = scope === "m" ? `Oy (${MONTHS[Number(day().slice(5, 7)) - 1]})` : "Yil";
+  }
+  for (const r of rows) r.pct = Math.round((r.done / r.goal) * 100);
+  rows.sort((a, b) => b.done / b.goal - a.done / a.goal || b.done - a.done);
+  return { title, rows, none };
+}
+
+const numIn = (v: unknown, max = 100) => {
+  const n = Math.round(Number(v) * 100) / 100;
+  return n > 0 && n <= max ? n : null;
+};
+
+async function rpc(req: Request) {
+  const body = await req.json().catch(() => null);
+  if (!body) return json({ error: "bad" }, 400);
+  const me = await verifyInit(String(body.initData ?? ""));
+  if (!me) return json({ error: "auth" }, 401);
+  const { uid, name } = me;
+  const circ = await adminCircle(uid, name);
+  const mem = await memberOf(uid);
+  const circId = circ?.id ?? mem?.circle_id;
+  if (!circId) return json({ error: "no_circle" }, 403);
+  const ws = weekStart();
+  const admin = !!circ;
+  const bad = () => json({ error: "bad" }, 400);
+  const forbid = () => json({ error: "forbidden" }, 403);
+  const ok = () => json({ ok: true });
+
+  switch (body.a) {
+    case "me": {
+      const out: Record<string, unknown> = {
+        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(),
+      };
+      if (mem) {
+        const s = (await statsFor([uid], ws)).get(uid)!;
+        const { data: all } = await sb.from("reports").select("pages").eq("tg_id", uid).eq("status", "approved");
+        out.my = {
+          goal: s.goal, approved: s.approved, pending: s.pending,
+          expected: s.goal ? expected(s.goal) : 0,
+          allTime: (all ?? []).reduce((x, r) => x + Number(r.pages), 0),
+          lt: await longTerm(uid), rec: await weekRecord(uid),
+        };
+      }
+      if (admin) {
+        const { count } = await sb.from("reports").select("*", { count: "exact", head: true })
+          .eq("circle_id", circId).eq("status", "pending");
+        out.pendingCount = count ?? 0;
+      }
+      return json(out);
+    }
+    case "ranking":
+      return json(await rankingData(circId, String(body.scope ?? "w")));
+    case "report": {
+      const n = numIn(body.pages);
+      if (!mem || !n) return bad();
+      await createReport(uid, name, n, true);
+      return ok();
+    }
+    case "request": {
+      const n = numIn(body.pages);
+      if (!mem || !n) return bad();
+      await sendRequest(uid, name, n, true);
+      return ok();
+    }
+    case "members": {
+      if (!admin) return forbid();
+      const { data: ms } = await sb.from("members").select("*").eq("circle_id", circId).order("joined_at");
+      const st = await statsFor((ms ?? []).map((m) => m.tg_id), ws);
+      const members = await Promise.all((ms ?? []).map(async (m) => {
+        const s = st.get(m.tg_id)!;
+        return {
+          id: m.tg_id, name: m.name, goal: s.goal, approved: s.approved, pending: s.pending,
+          expected: s.goal ? expected(s.goal) : 0, lt: await longTerm(m.tg_id),
+        };
+      }));
+      return json({ week_start: ws, members });
+    }
+    case "pending": {
+      if (!admin) return forbid();
+      const { data: rs } = await sb.from("reports").select("*")
+        .eq("circle_id", circId).eq("status", "pending").order("created_at");
+      const ids = (rs ?? []).map((r) => r.tg_id);
+      const { data: ms } = ids.length ? await sb.from("members").select("tg_id,name").in("tg_id", ids) : { data: [] };
+      const names = new Map((ms ?? []).map((m: any) => [m.tg_id, m.name]));
+      return json({
+        items: (rs ?? []).map((r) => ({
+          id: r.id, tg_id: r.tg_id, name: names.get(r.tg_id) ?? "A'zo", pages: Number(r.pages), day: r.day,
+        })),
+      });
+    }
+    case "decide": {
+      if (!admin) return forbid();
+      const id = Number(body.id);
+      if (!id || !["approved", "repeat"].includes(body.status)) return bad();
+      await decide(uid, id, body.status);
+      return ok();
+    }
+    case "setgoal": {
+      if (!admin) return forbid();
+      const id = Number(body.id), n = numIn(body.pages);
+      if (!id || !n) return bad();
+      await setGoal(uid, id, n, true);
+      return ok();
+    }
+    case "setyear": {
+      if (!admin) return forbid();
+      const id = Number(body.id), n = numIn(body.juz, 30);
+      if (!id || !n) return bad();
+      await setYear(uid, id, n, true);
+      return ok();
+    }
+    case "setmonth": {
+      if (!admin) return forbid();
+      const id = Number(body.id);
+      if (!id) return bad();
+      if (body.juz === null) {
+        await setMonth(uid, id, null, true);
+      } else {
+        const n = numIn(body.juz, 30);
+        if (!n) return bad();
+        await setMonth(uid, id, n, true);
+      }
+      return ok();
+    }
+    case "invite": {
+      if (!admin) return forbid();
+      return json({ link: `https://t.me/${await botUsername()}?start=j_${circ.join_code}` });
+    }
+    case "join": {
+      if (!admin) return forbid();
+      await sb.from("members").upsert({ tg_id: uid, circle_id: circ.id, name }, { onConflict: "tg_id" });
+      return ok();
+    }
+    default:
+      return bad();
+  }
+}
+
 // ---------- kirish nuqtasi ----------
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -833,6 +1025,7 @@ Deno.serve(async (req) => {
       const r = await tg("setWebhook", { url: hook, secret_token: k, drop_pending_updates: true });
       return text(`Webhook: ${JSON.stringify(await r.json())}\n\n--- SQL Editor'da Run qiling ---\n\n${cronSql(hook, k)}`);
     }
+    if (path.endsWith("/rpc")) return await rpc(req);
     if (path.endsWith("/api")) return await groupApi(url.searchParams.get("c") ?? "");
     if (path.endsWith("/cron")) {
       if (url.searchParams.get("k") !== (await secretKey())) return text("unauthorized", 401);
