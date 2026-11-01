@@ -32,8 +32,69 @@ const nowShift = (s = 0) => new Date(Date.now() + TZ * 3600e3 + s * 864e5);
 const day = (s = 0) => nowShift(s).toISOString().slice(0, 10);
 const dow = () => nowShift().getUTCDay(); // 0 = yakshanba
 const weekStart = () => day(-((dow() + 6) % 7)); // dushanba
-const dayIdx = () => (dow() === 0 ? 5 : dow() - 1); // 0..5 (du..sh), yakshanba = 5
-const expected = (goal: number) => (goal * (dayIdx() + 1)) / 6;
+// dam kuni (0=yakshanba..6=shanba): admin belgilaydi (circles.rest_day), hafta dushanbadan boshlanadi
+let REST = 0, restAt = 0;
+const ORDER = [1, 2, 3, 4, 5, 6, 0];
+const WORKDOW = () => ORDER.filter((x) => x !== REST);
+const elapsed = () => ORDER.slice(0, ORDER.indexOf(dow()) + 1).filter((x) => x !== REST).length; // o'tgan ish kunlari (bugun bilan)
+const dayIdx = () => WORKDOW().indexOf(dow()); // 0..5, dam kunida -1
+const expected = (goal: number) => (goal * elapsed()) / 6;
+const FULLDAY = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba"];
+const SHORTDAY = ["Ya", "Du", "Se", "Ch", "Pa", "Ju", "Sh"];
+async function loadRest() {
+  if (Date.now() - restAt < 30000) return;
+  const { data } = await sb.from("circles").select("rest_day").limit(1).maybeSingle();
+  REST = Number(data?.rest_day ?? 0); restAt = Date.now();
+}
+async function setRest(adminUid: number, n: number) {
+  if (!Number.isInteger(n) || n < 0 || n > 6) return false;
+  const { error } = await sb.from("circles").update({ rest_day: n }).eq("admin_id", adminUid);
+  if (error) return false;
+  REST = n; restAt = Date.now();
+  return true;
+}
+const restKb = () => ({
+  inline_keyboard: [
+    ORDER.slice(0, 4).map((d) => ({ text: (d === REST ? "✅ " : "") + FULLDAY[d], callback_data: `rd:${d}` })),
+    ORDER.slice(4).map((d) => ({ text: (d === REST ? "✅ " : "") + FULLDAY[d], callback_data: `rd:${d}` })),
+    [{ text: "⬅️ Orqaga", callback_data: "m" }],
+  ],
+});
+
+// vaqt statistikasi (study_sessions): daqiqa, bir betga ketgan vaqt
+async function timeStats(ids: number[], fromDay: string) {
+  type T = { min: number; n: number; pages: number; perPage: number | null; today: number };
+  const out = new Map<number, T>();
+  ids.forEach((i) => out.set(i, { min: 0, n: 0, pages: 0, perPage: null, today: 0 }));
+  if (!ids.length) return out;
+  const from = new Date(new Date(fromDay + "T00:00:00Z").getTime() - TZ * 3600e3).toISOString();
+  const todayFrom = new Date(day() + "T00:00:00Z").getTime() - TZ * 3600e3;
+  const { data } = await sb.from("study_sessions").select("tg_id,started_at,ended_at,pages")
+    .in("tg_id", ids).eq("status", "done").gte("started_at", from).not("ended_at", "is", null);
+  const pm = new Map<number, { m: number; p: number }>();
+  for (const r of data ?? []) {
+    const t0 = Date.parse(r.started_at), mins = (Date.parse(r.ended_at) - t0) / 60000;
+    if (!(mins >= 1 && mins <= 240)) continue; // tugatish unutilgan seanslar hisobga olinmaydi
+    const o = out.get(r.tg_id)!; o.min += mins; o.n++;
+    if (t0 >= todayFrom) o.today += mins;
+    const p = Number(r.pages || 0);
+    if (p > 0) { o.pages += p; const x = pm.get(r.tg_id) ?? { m: 0, p: 0 }; x.m += mins; x.p += p; pm.set(r.tg_id, x); }
+  }
+  for (const [id, o] of out) {
+    const x = pm.get(id);
+    o.min = Math.round(o.min); o.today = Math.round(o.today);
+    o.perPage = x && x.p > 0 ? Math.round(x.m / x.p) : null;
+  }
+  return out;
+}
+const fmtMin = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} soat ${Math.round(m % 60)} daq` : `${Math.round(m)} daq`);
+const monthStart = () => day().slice(0, 8) + "01";
+async function timeLines(uid: number) {
+  const w = (await timeStats([uid], weekStart())).get(uid)!, m = (await timeStats([uid], monthStart())).get(uid)!;
+  if (!m.n) return "";
+  return `\n⏱ <b>Vaqt</b>\nBugun: ${fmtMin(w.today)} · Hafta: ${fmtMin(w.min)} (${w.n} seans)\nOy: ${fmtMin(m.min)}` +
+    (m.perPage ? `\n📖 Bir betga o'rtacha: ${m.perPage} daq` : "");
+}
 
 const esc = (s: string) =>
   s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
@@ -436,7 +497,7 @@ async function decide(uid: number, rid: number, status: "approved" | "repeat", m
     if (crossed) {
       const rec = await weekRecord(r.tg_id);
       msg += `\n\n🎉 <b>Haftalik maqsad bajarildi!</b> 🏆\n` +
-        (r.week_start === weekStart() && dow() !== 6 && dow() !== 0
+        (r.week_start === weekStart() && elapsed() < 6
           ? "🏖️ Haftaning qolgan kunlari — dam olish kuni, eslatma kelmaydi.\n" : "") +
         `🔥 Hafta seriyasi: ${rec.streak}`;
       await send(circ.admin_id,
@@ -555,13 +616,18 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "new") return showMenu(uid, name);
 
+  if (a === "rdm" && circ) return send(uid, `🛌 Dam kuni: <b>${FULLDAY[REST]}</b>\nQaysi kun dam bo'lsin?`, restKb());
+  if (a.startsWith("rd:") && circ) {
+    const ok = await setRest(uid, Number(a.slice(3)));
+    return send(uid, ok ? `✅ Dam kuni: <b>${FULLDAY[REST]}</b>.\nOylik reja va haftalik hisob shunga moslanadi.` : "Xato.", restKb());
+  }
   if (await actEditPlus(a, uid)) return;
   if (await actAdminPlus(a, uid, name, mid)) return;
   if (await actPlus(a, uid, name, mid)) return;
 
   if (a === "site") {
     if (!circ) return;
-    return send(uid, "👑 Panelni ochish 👇", { inline_keyboard: [[{ text: "👑 Panel", web_app: { url: SITE + "admin/" } }]] });
+    return send(uid, "👑 Panelni ochish 👇", { inline_keyboard: [[{ text: "👑 Panel", web_app: { url: SITE + "admin/" } }], [{ text: `🛌 Dam kuni: ${FULLDAY[REST]}`, callback_data: "rdm" }]] });
   }
 
   if (a === "join") {
@@ -598,7 +664,7 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     const total = (all ?? []).reduce((x, r) => x + Number(r.pages), 0);
     const lt = await longTerm(uid);
     const rec = await weekRecord(uid);
-    return send(uid, statsText(mem.name, s, total, lt, rec), menuKb(isAdmin, true));
+    return send(uid, statsText(mem.name, s, total, lt, rec) + (await timeLines(uid)), menuKb(isAdmin, true));
   }
 
   // ----- yo'naltiruvchi amallari -----
@@ -730,12 +796,12 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 }
 
 // ---------- v10: oylik reja (admin kiritadi, kunlarga bo'linadi) ----------
-// reja belgilangan kundan oy oxirigacha, yakshanbasiz (dam olish)
+// reja belgilangan kundan oy oxirigacha, dam kunisiz
 function planDates(fromDate: string): string[] {
   const out: string[] = [];
   const end = monthEnd(fromDate);
   for (let d = fromDate; d <= end; d = addDays(d, 1)) {
-    if (new Date(d + "T00:00:00Z").getUTCDay() !== 0) out.push(d);
+    if (new Date(d + "T00:00:00Z").getUTCDay() !== REST) out.push(d);
   }
   return out.length ? out : [end];
 }
@@ -780,7 +846,7 @@ async function setMonthPlan(adminUid: number, memberId: number, pages: number, s
   const mp = await monthPlan(memberId);
   if (!mp) return;
   const today = mp.days.find((d) => d.today);
-  const head = `🗓 <b>Oylik reja</b>: ${fmt(pages)} sahifa, ${mp.days.length} kun (yakshanba dam)\n📍 Boshlanish: ${mp.start} (${mp.dir === -1 ? "orqaga" : "oldinga"})\n⚡ Kuniga ≈ ${pageStr(pages / mp.days.length)} sahifa`;
+  const head = `🗓 <b>Oylik reja</b>: ${fmt(pages)} sahifa, ${mp.days.length} kun (${FULLDAY[REST]} dam)\n📍 Boshlanish: ${mp.start} (${mp.dir === -1 ? "orqaga" : "oldinga"})\n⚡ Kuniga ≈ ${pageStr(pages / mp.days.length)} sahifa`;
   const sched = mp.days.slice(0, 7).map((d) => `${d.today ? "👉" : "▫️"} ${d.label}: ${d.from} → ${d.to}`).join("\n");
   if (memberId !== adminUid) {
     await send(memberId,
@@ -969,7 +1035,7 @@ type PlanInfo = {
   monthPlan?: { pages: number; start: string; dir: number; done: number; planned: number; behind: number; daysCount: number };
   restDay?: boolean;
 };
-const DAYN = ["Du", "Se", "Ch", "Pa", "Ju", "Sh"];
+const DAYN = { at: (i: number) => SHORTDAY[WORKDOW()[i]] };
 async function planInfo(uid: number): Promise<PlanInfo> {
   const ws = weekStart();
   const s = (await statsFor([uid], ws)).get(uid)!;
@@ -1014,7 +1080,7 @@ async function planInfo(uid: number): Promise<PlanInfo> {
     info.week = wb ? { from: label(wb.from), to: label(wb.to), pages: wb.pages } : null;
     const di = dayIdx();
     info.days = dayBlocks(p.week_ptr, goal, dir).map((b, i) => ({
-      day: DAYN[i], from: b ? label(b.from) : "—", to: b ? label(b.to) : "—", pages: b ? b.pages : 0, today: i === di,
+      day: DAYN.at(i), from: b ? label(b.from) : "—", to: b ? label(b.to) : "—", pages: b ? b.pages : 0, today: i === di,
     }));
     const need = expected(goal) - done;
     if (need <= 0.05) info.todayDone = true;
@@ -1158,6 +1224,7 @@ async function liveFinish(uid: number, name: string, range: [number, number] | n
     const circ = await circleById(mem.circle_id);
     if (circ && voice) await tg("sendVoice", { chat_id: circ.admin_id, voice, caption: `🎙 ${mem.name}` });
   }
+  const durMin = Math.round((Date.now() - Date.parse(s.started_at)) / 60000);
   await sb.from("study_sessions").update({
     status: "done", ended_at: new Date().toISOString(),
     from_ayah: range?.[0] ?? null, to_ayah: range?.[1] ?? null, pages: range ? pages : null,
@@ -1166,9 +1233,10 @@ async function liveFinish(uid: number, name: string, range: [number, number] | n
   // AI tahlil hozircha o'chirilgan: yo'naltiruvchi ovozni o'zi eshitib qaror qiladi (aiAnalyze kodi saqlangan)
   await broadcast(mem.circle_id, uid,
     `⏹ <b>${esc(mem.name)}</b> yodlashni tugatdi (${s.win_from}–${hm(new Date())})` +
+    (durMin >= 1 && durMin <= 240 ? `\n⏱ ${fmtMin(durMin)}` : "") +
     (range ? `\n📖 ${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa)` : "") + (voice ? "\n🎙 Ovoz yo'naltiruvchiga yuborildi" : ""));
   if (quiet) return;
-  return send(uid, `⏹ Tugadi! ${range ? `${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa) yo'naltiruvchiga yuborildi ✅` : "Saqlandi."}`, menuKb(!!(await circleOfAdmin(uid)), true));
+  return send(uid, `⏹ Tugadi!${durMin >= 1 && durMin <= 240 ? ` ⏱ ${fmtMin(durMin)}.` : ""} ${range ? `${label(range[0])} → ${label(range[1])} (≈ ${fmt(pages)} sahifa) yo'naltiruvchiga yuborildi ✅` : "Saqlandi."}`, menuKb(!!(await circleOfAdmin(uid)), true));
 }
 
 async function liveList(circId: number) {
@@ -1183,7 +1251,8 @@ async function liveList(circId: number) {
     id: x.id, tg_id: x.tg_id, name: nm(x.tg_id), slot: x.slot, from: x.win_from, to: x.win_to,
     started: hm(x.started_at), ended: x.ended_at ? hm(x.ended_at) : null, day: x.ended_at ? day(0) : null,
     range: x.from_ayah ? `${label(x.from_ayah)} → ${label(x.to_ayah)}` : null, pages: x.pages ? Number(x.pages) : null,
-    voice: !!x.voice_file,
+    voice: !!x.voice_file, since: x.started_at,
+    mins: x.ended_at ? Math.round((Date.parse(x.ended_at) - Date.parse(x.started_at)) / 60000) : null,
   });
   return { live: (live ?? []).map(mapS), done: (done ?? []).map(mapS) };
 }
@@ -1907,6 +1976,7 @@ async function handleMessage(msg: any) {
     const payload = t.split(/\s+/)[1] ?? "";
     return act("start", uid, name);
   }
+  if (t.startsWith("/dam")) return act("rdm", uid, name);
   if (t.startsWith("/menyu") || t.startsWith("/menu")) return act("menu", uid, name);
   if (t.startsWith("/")) return;
   return handleText(uid, name, t);
@@ -1934,7 +2004,7 @@ async function groupApi(code: string) {
 
 // ---------- eslatmalar ----------
 async function remind() {
-  if (dow() === 0) return; // yakshanba dam olish
+  if (dow() === REST) return; // dam kuni
   const { data: cs } = await sb.from("circles").select("*");
   for (const c of cs ?? []) {
     const { data: ms } = await sb.from("members").select("*").eq("circle_id", c.id);
@@ -2082,7 +2152,7 @@ async function rpc(req: Request) {
   switch (body.a) {
     case "me": {
       const out: Record<string, unknown> = {
-        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(),
+        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(), rest_day: REST, rest_name: FULLDAY[REST],
       };
       if (mem) {
         const s = (await statsFor([uid], ws)).get(uid)!;
@@ -2092,6 +2162,7 @@ async function rpc(req: Request) {
           expected: s.goal ? expected(s.goal) : 0,
           allTime: (all ?? []).reduce((x, r) => x + Number(r.pages), 0),
           lt: await longTerm(uid), rec: await weekRecord(uid),
+          time: { week: (await timeStats([uid], ws)).get(uid), month: (await timeStats([uid], monthStart())).get(uid) },
         };
       }
       if (admin) {
@@ -2115,10 +2186,12 @@ async function rpc(req: Request) {
       if (!admin) return forbid();
       const { data: ms } = await sb.from("members").select("*").eq("circle_id", circId).order("joined_at");
       const st = await statsFor((ms ?? []).map((m) => m.tg_id), ws);
+      const tw = await timeStats((ms ?? []).map((m) => m.tg_id), ws), tm = await timeStats((ms ?? []).map((m) => m.tg_id), monthStart());
       const members = await Promise.all((ms ?? []).map(async (m) => {
         const s = st.get(m.tg_id)!;
         return {
           id: m.tg_id, name: m.name, phone: m.phone ?? null, goal: s.goal, approved: s.approved, pending: s.pending,
+          time: { week: tw.get(m.tg_id), month: tm.get(m.tg_id) },
           expected: s.goal ? expected(s.goal) : 0, lt: await longTerm(m.tg_id),
         };
       }));
@@ -2228,7 +2301,7 @@ async function rpc(req: Request) {
     case "live": {
       const l = await liveList(circId);
       const mine = mem ? await liveOf(uid) : null;
-      return json({ ...l, slots: SLOTS, mine: mine ? { slot: mine.slot, from: mine.win_from, to: mine.win_to } : null, isMember: !!mem });
+      return json({ ...l, slots: SLOTS, mine: mine ? { slot: mine.slot, from: mine.win_from, to: mine.win_to, since: mine.started_at } : null, isMember: !!mem });
     }
     case "live_start": {
       if (!mem) return forbid();
@@ -2259,6 +2332,10 @@ async function rpc(req: Request) {
       }
       await liveFinish(uid, name, range, null, true);
       return ok();
+    }
+    case "rest_set": {
+      if (!admin) return forbid();
+      return (await setRest(uid, Number(body.day))) ? json({ ok: true, rest_day: REST, rest_name: FULLDAY[REST] }) : bad();
     }
     case "member_add": {
       if (!admin) return forbid();
@@ -2387,6 +2464,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
   try {
+    await loadRest();
     if (path.endsWith("/setup")) {
       if (url.searchParams.get("token") !== BOT) return text("token noto'g'ri", 401);
       const k = await secretKey();

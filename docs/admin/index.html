@@ -25,7 +25,8 @@ function memberSheet(m) {
     const w = h("div", { style: "margin-top:10px" });
     w.append(h("div", { class: "card" },
       h("div", { class: "row" }, h("span", {}, "🎯 Bu hafta"), h("b", {}, m.goal ? fmt(m.approved) + " / " + fmt(m.goal) : "reja yo'q")),
-      ...ltInfo(m.lt).map(([t, v]) => h("div", { class: "row" }, h("span", {}, t), h("b", {}, v)))));
+      ...ltInfo(m.lt).map(([t, v]) => h("div", { class: "row" }, h("span", {}, t), h("b", {}, v))),
+      ...timeRows(m.time)));
     w.append(h("button", { class: "btn primary wide", onclick: () => { close(); monthPlanSheet(m); } }, "🗓 Oylik reja"));
     w.append(h("button", { class: "btn wide", onclick: () => { close(); numberSheet({ title: "🎯 " + m.name + ": bu hafta necha sahifa?", nums: NUMS,
       onPick: v => act("setgoal", { id: m.id, pages: v }, "✅ Haftalik belgilandi") }); } }, "🎯 Haftalik"));
@@ -103,6 +104,7 @@ async function membersView() {
     sumGoal ? bar(sumApp, 0, sumGoal) : null,
     h("div", { class: "actions", style: "margin:10px 0 0" },
       h("button", { class: "btn primary", onclick: addMemberSheet }, "➕ A'zo qo'shish"),
+      h("button", { class: "btn", onclick: restSheet }, "🛌 Dam kuni: " + (S.me.rest_name || "yakshanba")),
       h("button", { class: "btn", onclick: () => copyOrShow("📈 Hafta hisoboti (" + d.week_start + ")\n\n" + lines.join("\n") + "\n\nJami tasdiqlangan: " + fmt(sumApp) + " sahifa") }, "📋 Hisobot"))));
   root.append(h("div", { class: "seg wrap" }, FILTERS.map(([k, l]) =>
     h("button", { class: k === (S.filter || "all") ? "on" : "", onclick: () => { S.filter = k; render(); } }, l))));

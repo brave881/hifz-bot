@@ -75,3 +75,4 @@
   nav.nav button span:last-child { font-size: 10px; }
   pre.old { white-space: pre-wrap; font: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
   .row.day.past { opacity: .55; }
+.timer{font-size:28px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums}

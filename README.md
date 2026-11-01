@@ -23,3 +23,8 @@ Quron yodlash guruhi uchun Telegram bot + sayt.
 - Yo'naltiruvchi a'zo, hisobot va xatolarni o'chira oladi; hammasi **Savat**da saqlanadi va tiklanadi (bot: «🗑 Savat», sayt: «Savat» bo'limi).
 - A'zo hech narsani o'zgartira olmaydi; xato qilsa «✉️ Yo'naltiruvchiga yozish» orqali xabar yuboradi.
 - Migratsiya: `supabase/migrations/005_v12.sql`.
+
+## v14 — dam kuni, taymer, vaqt hisoboti
+- **Dam kuni** admin tomonidan belgilanadi (bot: `/dam` yoki Panel xabaridagi tugma; sayt: A'zolar → 🛌 Dam kuni). Oylik reja, haftalik «kutilgan» hisob va eslatmalar shunga moslanadi. Migratsiya: `007_v14.sql`.
+- **Jonli taymer** (sayt «Hozir» bo'limi): ⏱ soat:daqiqa:soniya. Botda tugatganda davomiylik yoziladi.
+- **Vaqt statistikasi**: bugun / hafta / oy daqiqalari, seanslar soni, bir betga o'rtacha vaqt (a'zoda «Natijam», adminda a'zo kartasida). 1 daqiqadan kam yoki 4 soatdan uzun seanslar (tugatish unutilgan) hisobga olinmaydi.

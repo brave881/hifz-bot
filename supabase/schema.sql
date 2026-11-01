@@ -172,3 +172,5 @@ create table if not exists audit (
 );
 create index if not exists audit_circle_idx on audit (circle_id, member_id, created_at desc);
 alter table audit enable row level security;
+-- v14: dam kuni admin tomonidan belgilanadi (0=yakshanba, 1=dushanba ... 6=shanba)
+alter table circles add column if not exists rest_day smallint not null default 0;

@@ -164,6 +164,7 @@ async function liveView() {
   if (d.isMember) {
     if (d.mine) {
       root.append(h("div", { class: "card live" }, h("b", {}, "▶️ Siz yodlayapsiz"),
+        h("div", { class: "timer" }, timerEl(d.mine.since)),
         h("div", { class: "meta" }, (d.slots[d.mine.slot] || "") + " · " + d.mine.from + "–" + d.mine.to)));
       root.append(h("div", { class: "actions" },
         h("button", { class: "btn primary", onclick: async () => { let pi = null; try { pi = await rpc("plan"); } catch (e) {} finishLive(pi); } }, "⏹ Tugatdim"),
@@ -175,12 +176,12 @@ async function liveView() {
   root.append(h("div", { class: "sec" }, "🔴 Hozir yodlayotganlar"));
   if (!d.live.length) root.append(h("div", { class: "msg" }, "Hozir hech kim yodlamayapti."));
   d.live.forEach(x => root.append(h("div", { class: "card live" },
-    h("div", { class: "row" }, h("b", {}, "▶️ " + x.name), h("span", { class: "num" }, x.from + "–" + x.to)),
-    h("div", { class: "meta" }, d.slots[x.slot] || ""))));
+    h("div", { class: "row" }, h("b", {}, "▶️ " + x.name), h("span", { class: "num" }, timerEl(x.since))),
+    h("div", { class: "meta" }, (d.slots[x.slot] || "") + " · " + x.from + "–" + x.to))));
   if (d.done.length) {
     root.append(h("div", { class: "sec" }, "⏹ So'nggi tugatganlar"));
     d.done.slice(0, 12).forEach(x => root.append(h("div", { class: "card" },
-      h("div", { class: "row" }, h("b", {}, x.name), h("span", { class: "meta" }, x.started + "–" + x.ended)),
+      h("div", { class: "row" }, h("b", {}, x.name), h("span", { class: "meta" }, x.started + "–" + x.ended + (x.mins >= 1 && x.mins <= 240 ? " · ⏱ " + fmtMin(x.mins) : ""))),
       x.range ? h("div", { class: "meta" }, "📖 " + x.range + (x.pages ? " · ≈ " + fmt(x.pages) + " sahifa" : "")) : null,
       x.voice && S.me && S.me.isAdmin ? h("div", { style: "margin-top:8px" }, voiceBtn(x.id)) : null)));
   }
@@ -390,5 +391,41 @@ function writeAdminSheet() {
     const t = h("textarea", { class: "rep", style: "min-height:110px", placeholder: "Masalan: kecha noto'g'ri sahifa yuborib qo'ydim…" });
     return h("div", {}, h("div", { class: "meta" }, "Xato qilsangiz yoki savolingiz bo'lsa, shu yerga yozing — yo'naltiruvchi o'zi tuzatadi."), t,
       h("button", { class: "btn primary wide", onclick: async () => { if (!t.value.trim()) return toast("Matn yozing"); try { await rpc("message", { text: t.value }); close(); toast("✅ Yuborildi"); } catch (e) { toast("Xato: " + e.message); } } }, "Yuborish"));
+  });
+}
+
+// ---- v14: taymer, vaqt statistikasi, dam kuni ----
+function fmtMin(m) { m = Math.round(m); return m >= 60 ? Math.floor(m / 60) + " soat " + (m % 60) + " daq" : m + " daq"; }
+function timerEl(since) {
+  const el = h("span", { class: "num" }), t0 = Date.parse(since || "");
+  let seen = false, iv = null;
+  const tick = () => {
+    if (el.isConnected) seen = true; else if (seen) { clearInterval(iv); return; }
+    if (isNaN(t0)) { el.textContent = "—"; return; }
+    const s = Math.max(0, Math.floor((Date.now() - t0) / 1000)), p = n => String(n).padStart(2, "0");
+    el.textContent = "⏱ " + p(Math.floor(s / 3600)) + ":" + p(Math.floor(s / 60) % 60) + ":" + p(s % 60);
+  };
+  iv = setInterval(tick, 1000); tick();
+  return el;
+}
+function timeRows(t) {
+  if (!t || !t.month || !t.month.n) return [h("div", { class: "meta" }, "⏱ Vaqt: hali «Yodlashni boshlash» ishlatilmagan")];
+  const w = t.week || { min: 0, n: 0, today: 0 };
+  const rows = [
+    h("div", { class: "row" }, h("span", {}, "⏱ Bugun"), h("b", {}, fmtMin(w.today || 0))),
+    h("div", { class: "row" }, h("span", {}, "⏱ Hafta"), h("b", {}, fmtMin(w.min) + " · " + w.n + " seans")),
+    h("div", { class: "row" }, h("span", {}, "⏱ Oy"), h("b", {}, fmtMin(t.month.min) + " · " + t.month.n + " seans")),
+  ];
+  if (t.month.perPage) rows.push(h("div", { class: "row" }, h("span", {}, "📖 Bir betga o'rtacha"), h("b", {}, t.month.perPage + " daq")));
+  return rows;
+}
+const DAYNAMES = [["Dushanba", 1], ["Seshanba", 2], ["Chorshanba", 3], ["Payshanba", 4], ["Juma", 5], ["Shanba", 6], ["Yakshanba", 0]];
+function restSheet() {
+  openSheet("🛌 Dam kuni", close => {
+    const cur = S.me.rest_day;
+    return h("div", {}, h("div", { class: "meta" }, "Hamma uchun bitta dam kuni. Oylik reja shu kunsiz bo'linadi, dam kunida eslatma kelmaydi."),
+      DAYNAMES.map(([n, v]) => h("button", { class: "btn wide" + (v === cur ? " primary" : ""), onclick: async () => {
+        try { await rpc("rest_set", { day: v }); close(); toast("🛌 Dam kuni: " + n); await reload(); } catch (e) { toast("Xato: " + e.message); }
+      } }, (v === cur ? "✅ " : "") + n)));
   });
 }

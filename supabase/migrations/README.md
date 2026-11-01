@@ -11,3 +11,6 @@ Har yangilanish alohida fayl. Hammasi takrorlansa ham zarar qilmaydi (idempotent
 | `002_v9.sql` | yangi jadvallar/ustunlar |
 | `003_v10.sql` | yangi jadvallar/ustunlar |
 | `004_v11.sql` | yangi jadvallar/ustunlar |
+| `005_v12.sql` | a'zo telefoni, savat |
+| `006_v13.sql` | audit (tuzatish tarixi) |
+| `007_v14.sql` | dam kuni sozlamasi |
