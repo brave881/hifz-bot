@@ -16,3 +16,4 @@ Har yangilanish alohida fayl. Hammasi takrorlansa ham zarar qilmaydi (idempotent
 | `007_v14.sql` | dam kuni sozlamasi |
 | `008_v15.sql` | takror, sovrin, oylik natijalar |
 | `009_v16.sql` | fazilat eslatmalari, ertalabki vaqt |
+| `010_v16b_fazilat.sql` | +13 ta fazilat (oyat, hadis, ulamo so'zlari) |
