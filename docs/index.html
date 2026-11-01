@@ -17,10 +17,16 @@ const reportFlow = () => numberSheet({ title: "📖 Necha sahifa yodladingiz?", 
   hint: "Yo'naltiruvchiga yuboriladi, u tekshirib tasdiqlaydi.",
   onPick: v => act("report", { pages: v }, "📨 Yuborildi, yo'naltiruvchi tekshiradi") });
 
+const revFlow = () => numberSheet({ title: "🔁 Necha sahifa takror qildingiz?", nums: [1, 2, 3, 4, 5, 6, 8, 10],
+  hint: "Norma: kuniga " + fmt(S.me.rev_daily || 0) + " sahifa. Takror ballga qo'shiladi.",
+  onPick: v => act("rev_add", { pages: v }, "🔁 Yozildi") });
+
 async function homeView() {
   const my = S.me.my, root = h("div");
   root.append(h("div", { class: "actions" },
-    h("button", { class: "btn primary", onclick: reportFlow }, "📖 Yodladim")));
+    h("button", { class: "btn primary", onclick: reportFlow }, "📖 Yodladim"),
+    h("button", { class: "btn", onclick: revFlow }, "🔁 Takror")));
+  root.append(h("div", { class: "meta" }, "🔁 Takror bugun: " + fmt(my.revToday || 0) + " / " + fmt(S.me.rev_daily || 0) + " sahifa"));
 
   const card = h("div", { class: "card" },
     h("div", { class: "row" }, h("b", {}, "Haftalik maqsad"), h("span", { class: "num" }, my.goal ? fmt(my.approved) + " / " + fmt(my.goal) : "reja yo'q")));

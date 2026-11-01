@@ -86,10 +86,23 @@ function showMsg(html, title) {
   const d = h("div", { class: "msg" }); d.innerHTML = html; $app.append(d);
 }
 
+async function scoreView(root) {
+  const d = await rpc("score");
+  root.append(h("div", { class: "sub" }, d.month + " · reja " + d.weights.plan + " + muntazamlik " + d.weights.cons + " + takror " + d.weights.rev + " = 100"));
+  if (d.prize) root.append(h("div", { class: "tip" }, "🎁 Sovrin: " + d.prize));
+  if (!d.rows.length) root.append(h("div", { class: "msg" }, "A'zolar yo'q."));
+  d.rows.forEach((r, i) => root.append(h("div", { class: "card" },
+    h("div", { class: "row" }, h("b", {}, (MEDALS[i] || (i + 1) + ".") + " " + r.name), h("span", { class: "num" }, r.score + " ball")),
+    bar(r.score, 0, 100),
+    h("div", { class: "meta" }, "📖 " + fmt(r.done) + (r.target ? "/" + fmt(r.target) : "") + " (" + r.planPct + "%) · 📅 " + r.days + "/" + r.wd + " kun · 🔁 " + fmt(r.rev) + "/" + fmt(r.revTarget)))));
+  return root;
+}
 async function rankView() {
-  const d = await rpc("ranking", { scope: S.scope }), root = h("div");
-  root.append(h("div", { class: "seg" }, [["w", "📅 Hafta"], ["m", "🗓 Oy"], ["y", "📆 Yil"]].map(([k, l]) =>
+  const root = h("div");
+  root.append(h("div", { class: "seg" }, [["w", "📅 Hafta"], ["m", "🗓 Oy"], ["y", "📆 Yil"], ["s", "🏅 Ball"]].map(([k, l]) =>
     h("button", { class: k === S.scope ? "on" : "", onclick: () => { S.scope = k; render(); } }, l))));
+  if (S.scope === "s") return scoreView(root);
+  const d = await rpc("ranking", { scope: S.scope });
   root.append(h("div", { class: "sub" }, d.title + " · maqsadga nisbatan"));
   if (!d.rows.length) root.append(h("div", { class: "msg" }, "Hali reja belgilanmagan."));
   d.rows.forEach((r, i) => root.append(h("div", { class: "card" },

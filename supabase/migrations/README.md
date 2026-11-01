@@ -14,3 +14,4 @@ Har yangilanish alohida fayl. Hammasi takrorlansa ham zarar qilmaydi (idempotent
 | `005_v12.sql` | a'zo telefoni, savat |
 | `006_v13.sql` | audit (tuzatish tarixi) |
 | `007_v14.sql` | dam kuni sozlamasi |
+| `008_v15.sql` | takror, sovrin, oylik natijalar |

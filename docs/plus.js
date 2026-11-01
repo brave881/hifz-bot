@@ -300,6 +300,7 @@ const errTxt = e => ERR_UZ[e.message] || ("Xato: " + e.message);
 async function memberReportsSheet(m) {
   try {
     const d = await rpc("report_list", { id: m.id });
+    const rv = await rpc("rev_list", { id: m.id });
     openSheet("📖 " + m.name + ": hisobotlar", close => {
       const w = h("div", {}, h("div", { class: "meta" }, "Tuzatish uchun hisobotni bosing. Hamma o'zgarish «Tarix»da saqlanadi va qaytariladi."),
         h("button", { class: "btn primary wide", onclick: () => { close(); addReportSheet(m); } }, "➕ Hisobot qo'shish"),
@@ -307,6 +308,11 @@ async function memberReportsSheet(m) {
       if (!d.items.length) w.append(h("div", { class: "msg" }, "Hisobot yo'q."));
       d.items.forEach(r => w.append(h("div", { class: "card tap", onclick: () => { close(); editReportSheet(m, r); } }, h("div", { class: "row" },
         h("span", {}, fmt(r.pages) + " sahifa · " + r.day), h("span", { class: "meta" }, REP_ST[r.status] || r.status)))));
+      w.append(h("div", { class: "sec" }, "🔁 Takror"));
+      if (!rv.items.length) w.append(h("div", { class: "meta" }, "Takror yozilmagan."));
+      rv.items.forEach(r => w.append(h("div", { class: "card" }, h("div", { class: "row" },
+        h("span", {}, fmt(r.pages) + " sahifa · " + r.day),
+        h("button", { class: "btn", onclick: async () => { try { await rpc("rev_delete", { id: r.id }); close(); toast("🗑 O'chirildi"); await reload(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑")))));
       return w;
     });
   } catch (e) { toast("Xato: " + e.message); }
@@ -427,5 +433,22 @@ function restSheet() {
       DAYNAMES.map(([n, v]) => h("button", { class: "btn wide" + (v === cur ? " primary" : ""), onclick: async () => {
         try { await rpc("rest_set", { day: v }); close(); toast("🛌 Dam kuni: " + n); await reload(); } catch (e) { toast("Xato: " + e.message); }
       } }, (v === cur ? "✅ " : "") + n)));
+  });
+}
+
+function settingsSheet() {
+  openSheet("⚙️ Sozlamalar", close => {
+    const rv = h("input", { type: "number", inputmode: "decimal", step: "0.5", min: "0.5", max: "50", value: String(S.me.rev_daily || 5) });
+    const pz = h("input", { type: "text", maxlength: "200", placeholder: "Masalan: Umra safari", value: S.me.prize || "" });
+    return h("div", {},
+      h("div", { class: "sec" }, "🛌 Dam kuni: " + (S.me.rest_name || "")),
+      h("button", { class: "btn wide", onclick: () => { close(); restSheet(); } }, "Dam kunini o'zgartirish"),
+      h("div", { class: "sec" }, "🔁 Kunlik takror normasi (sahifa)"), h("div", { class: "custom" }, rv),
+      h("div", { class: "sec" }, "🎁 Oylik sovrin"), h("div", { class: "custom" }, pz),
+      h("div", { class: "meta" }, "Oy g'olibi ball bo'yicha aniqlanadi: reja 50 + muntazamlik 30 + takror 20."),
+      h("button", { class: "btn primary wide", onclick: async () => {
+        try { await rpc("settings_set", { rev_daily: Number(String(rv.value).replace(",", ".")), prize: pz.value }); close(); toast("✅ Saqlandi"); await reload(); }
+        catch (e) { toast(e.message === "bad_rev" ? "Takror normasi 0 dan katta, 50 gacha bo'lsin" : "Xato: " + e.message); }
+      } }, "Saqlash"));
   });
 }

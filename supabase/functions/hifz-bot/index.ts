@@ -33,7 +33,7 @@ const day = (s = 0) => nowShift(s).toISOString().slice(0, 10);
 const dow = () => nowShift().getUTCDay(); // 0 = yakshanba
 const weekStart = () => day(-((dow() + 6) % 7)); // dushanba
 // dam kuni (0=yakshanba..6=shanba): admin belgilaydi (circles.rest_day), hafta dushanbadan boshlanadi
-let REST = 0, restAt = 0;
+let REST = 0, restAt = 0, REV_DAILY = 5, PRIZE = "";
 const ORDER = [1, 2, 3, 4, 5, 6, 0];
 const WORKDOW = () => ORDER.filter((x) => x !== REST);
 const elapsed = () => ORDER.slice(0, ORDER.indexOf(dow()) + 1).filter((x) => x !== REST).length; // o'tgan ish kunlari (bugun bilan)
@@ -43,8 +43,11 @@ const FULLDAY = ["yakshanba", "dushanba", "seshanba", "chorshanba", "payshanba",
 const SHORTDAY = ["Ya", "Du", "Se", "Ch", "Pa", "Ju", "Sh"];
 async function loadRest() {
   if (Date.now() - restAt < 30000) return;
-  const { data } = await sb.from("circles").select("rest_day").limit(1).maybeSingle();
-  REST = Number(data?.rest_day ?? 0); restAt = Date.now();
+  const { data } = await sb.from("circles").select("*").limit(1).maybeSingle();
+  REST = Number(data?.rest_day ?? 0);
+  REV_DAILY = data?.rev_daily != null ? Number(data.rev_daily) : 5;
+  PRIZE = String(data?.prize ?? "");
+  restAt = Date.now();
 }
 async function setRest(adminUid: number, n: number) {
   if (!Number.isInteger(n) || n < 0 || n > 6) return false;
@@ -329,7 +332,7 @@ function menuKb(isAdmin: boolean, isMem: boolean, pending = 0) {
     if (!isMem) rows.push([{ text: "➕ Men ham a'zoman", callback_data: "join" }]);
   }
   if (isMem) {
-    rows.push([{ text: "📖 Yodladim", callback_data: "rp" }]);
+    rows.push([{ text: "📖 Yodladim", callback_data: "rp" }, { text: "🔁 Takror", callback_data: "tk" }]);
     rows.push([{ text: "▶️ Yodlashni boshlash / tugatish", callback_data: "lm" }]);
     rows.push([
       { text: "🗺 Rejam", callback_data: "pl" },
@@ -562,6 +565,7 @@ async function setMonth(adminUid: number, memberId: number, juz: number | null, 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
 async function rankingText(circId: number, scope: string) {
+  if (scope === "s") return await scoreText(circId);
   const { data: ms } = await sb.from("members").select("*").eq("circle_id", circId);
   const list = ms ?? [];
   type Row = { name: string; goal: number; done: number };
@@ -595,7 +599,7 @@ async function rankingText(circId: number, scope: string) {
 
 const rankKb = (scope: string) => ({
   inline_keyboard: [
-    [["w", "📅 Hafta"], ["m", "🗓 Oy"], ["y", "📆 Yil"]].map(([k, l]) => ({
+    [["w", "📅 Hafta"], ["m", "🗓 Oy"], ["y", "📆 Yil"], ["s", "🏅 Ball"]].map(([k, l]) => ({
       text: (k === scope ? "• " : "") + l, callback_data: `top:${k}`,
     })),
     [{ text: "⬅️ Menyu", callback_data: "m" }],
@@ -658,13 +662,19 @@ async function act(a: string, uid: number, name: string, mid?: number) {
     return createReport(uid, name, Number(v));
   }
 
+  if (a === "tk" && isMem) return send(uid, `🔁 Necha sahifa takror qildingiz?\n<i>Norma: kuniga ${fmt(REV_DAILY)} sahifa</i>`, numKb("tk", "m", [1, 2, 3, 4, 5, 6, 8, 10]));
+  if (a.startsWith("tk:") && isMem) {
+    const v = a.slice(3);
+    if (v === "x") { await setSession("rev"); return send(uid, "Necha sahifa? Son yozing. Masalan: <code>3</code>"); }
+    return void (await addRevision(uid, Number(v)));
+  }
   if (a === "me" && isMem) {
     const s = (await statsFor([uid], ws)).get(uid)!;
     const { data: all } = await sb.from("reports").select("pages").eq("tg_id", uid).eq("status", "approved");
     const total = (all ?? []).reduce((x, r) => x + Number(r.pages), 0);
     const lt = await longTerm(uid);
     const rec = await weekRecord(uid);
-    return send(uid, statsText(mem.name, s, total, lt, rec) + (await timeLines(uid)), menuKb(isAdmin, true));
+    return send(uid, statsText(mem.name, s, total, lt, rec) + (await revLine(uid)) + (await timeLines(uid)), menuKb(isAdmin, true));
   }
 
   // ----- yo'naltiruvchi amallari -----
@@ -1951,6 +1961,7 @@ async function handleText(uid: number, name: string, t: string) {
   }
   await sb.from("sessions").delete().eq("tg_id", uid);
   if (s.state === "report") return createReport(uid, name, n);
+  if (s.state === "rev") { await addRevision(uid, n); return; }
   if (s.state === "req" || s.state.startsWith("req:")) {
     const kind = s.state.startsWith("req:") ? s.state.slice(4) : "w";
     return sendRequest(uid, name, n, kind);
@@ -1977,6 +1988,18 @@ async function handleMessage(msg: any) {
     return act("start", uid, name);
   }
   if (t.startsWith("/dam")) return act("rdm", uid, name);
+  if (t.startsWith("/takror") || t.startsWith("/sovga")) {
+    const c = await adminCircle(uid, name);
+    if (!c) return;
+    const arg = t.replace(/^\/\S+\s*/, "").trim();
+    if (t.startsWith("/takror")) {
+      const n = Math.round(parseFloat(arg.replace(",", ".")) * 100) / 100;
+      if (!arg) return send(uid, `🔁 Takror normasi: kuniga <b>${fmt(REV_DAILY)}</b> sahifa.\nO'zgartirish: <code>/takror 6</code>`);
+      return send(uid, (await setRevDaily(uid, n)) ? `✅ Takror normasi: kuniga <b>${fmt(REV_DAILY)}</b> sahifa.` : "Son noto'g'ri (0 dan katta, 50 gacha).");
+    }
+    if (!arg) return send(uid, `🎁 Oylik sovrin: <b>${esc(PRIZE || "belgilanmagan")}</b>\nO'zgartirish: <code>/sovga Umra safari</code>\nO'chirish: <code>/sovga -</code>`);
+    return send(uid, (await setPrize(uid, arg === "-" ? "" : arg)) ? `✅ Sovrin: <b>${esc(PRIZE || "o'chirildi")}</b>` : "Xato.");
+  }
   if (t.startsWith("/menyu") || t.startsWith("/menu")) return act("menu", uid, name);
   if (t.startsWith("/")) return;
   return handleText(uid, name, t);
@@ -2002,8 +2025,117 @@ async function groupApi(code: string) {
   return json({ name: c.name, week_start: ws, today: day(), members });
 }
 
+
+// ---------- v15: takror, ball, oylik g'olib ----------
+const W_PLAN = 50, W_CONS = 30, W_REV = 20; // ball: reja foizi + muntazamlik + takror = 100
+async function setRevDaily(adminUid: number, n: number) {
+  if (!(n > 0 && n <= 50)) return false;
+  const { error } = await sb.from("circles").update({ rev_daily: n }).eq("admin_id", adminUid);
+  if (error) return false;
+  REV_DAILY = n; restAt = Date.now();
+  return true;
+}
+async function setPrize(adminUid: number, t: string) {
+  const v = t.trim().slice(0, 200);
+  const { error } = await sb.from("circles").update({ prize: v || null }).eq("admin_id", adminUid);
+  if (error) return false;
+  PRIZE = v; restAt = Date.now();
+  return true;
+}
+async function revToday(uid: number) {
+  const { data } = await sb.from("revisions").select("pages").eq("tg_id", uid).eq("day", day());
+  return (data ?? []).reduce((x, r) => x + Number(r.pages), 0);
+}
+async function addRevision(uid: number, pages: number, quiet = false) {
+  const mem = await memberOf(uid);
+  const p = Math.round(pages * 100) / 100;
+  if (!mem || !(p > 0 && p <= 50)) return null;
+  await sb.from("revisions").insert({ tg_id: uid, circle_id: mem.circle_id, day: day(), pages: p });
+  const tot = await revToday(uid);
+  if (!quiet) await send(uid, `🔁 Takror yozildi: <b>${fmt(p)}</b> sahifa.\nBugun jami: <b>${fmt(tot)}</b> / ${fmt(REV_DAILY)} 🌙`, await kbFor(uid));
+  return tot;
+}
+const workDaysBetween = (a: string, b: string) => {
+  let n = 0;
+  for (let d = a; d <= b; d = addDays(d, 1)) if (new Date(d + "T00:00:00Z").getUTCDay() !== REST) n++;
+  return n;
+};
+type ScoreRow = { id: number; name: string; score: number; planPct: number; done: number; target: number; days: number; wd: number; rev: number; revTarget: number };
+async function monthScore(circId: number, month: string): Promise<ScoreRow[]> {
+  const { data: ms } = await sb.from("members").select("tg_id,name,joined_at").eq("circle_id", circId);
+  const list = ms ?? [], ids = list.map((m) => m.tg_id);
+  if (!ids.length) return [];
+  const first = month + "-01", last = monthEnd(first);
+  const endDay = day() < first ? first : day() < last ? day() : last;
+  const [{ data: rs }, { data: vs }, { data: mps }, { data: gs }] = await Promise.all([
+    sb.from("reports").select("tg_id,pages,day").eq("status", "approved").gte("day", first).lte("day", last).in("tg_id", ids),
+    sb.from("revisions").select("tg_id,pages,day").gte("day", first).lte("day", last).in("tg_id", ids),
+    sb.from("month_plans").select("tg_id,pages").eq("month", month).in("tg_id", ids),
+    sb.from("goals").select("tg_id,pages,week_start").gte("week_start", first).lte("week_start", last).in("tg_id", ids),
+  ]);
+  const rows: ScoreRow[] = list.map((m) => {
+    const joined = new Date(Date.parse(m.joined_at) + TZ * 3600e3).toISOString().slice(0, 10);
+    const start = joined > first ? joined : first;
+    const elapsedWd = workDaysBetween(start, endDay), wd = workDaysBetween(start, last);
+    const mine = (rs ?? []).filter((r) => r.tg_id === m.tg_id && r.day >= start && r.day <= endDay);
+    const done = mine.reduce((x, r) => x + Number(r.pages), 0);
+    const mp = (mps ?? []).find((x) => x.tg_id === m.tg_id);
+    const target = mp ? Number(mp.pages) : (gs ?? []).filter((g) => g.tg_id === m.tg_id).reduce((x, g) => x + Number(g.pages), 0);
+    const planGoal = wd ? (target * elapsedWd) / wd : 0;
+    const planPct = planGoal > 0 ? Math.min(1, done / planGoal) : 0;
+    const days = new Set(mine.map((r) => r.day)).size;
+    const cons = elapsedWd ? Math.min(1, days / elapsedWd) : 0;
+    const rev = (vs ?? []).filter((v) => v.tg_id === m.tg_id && v.day >= start && v.day <= endDay).reduce((x, v) => x + Number(v.pages), 0);
+    const revTarget = REV_DAILY * elapsedWd;
+    const revPct = revTarget > 0 ? Math.min(1, rev / revTarget) : 0;
+    return {
+      id: m.tg_id, name: m.name, score: Math.round(W_PLAN * planPct + W_CONS * cons + W_REV * revPct),
+      planPct: Math.round(planPct * 100), done, target, days, wd: elapsedWd, rev, revTarget,
+    };
+  });
+  return rows.sort((a, b) => b.score - a.score || b.done - a.done);
+}
+const medalOf = (i: number) => ["🥇", "🥈", "🥉"][i] ?? `${i + 1}.`;
+function scoreLines(rows: ScoreRow[]) {
+  return rows.map((r, i) =>
+    `${medalOf(i)} <b>${esc(r.name)}</b> — <b>${r.score}</b> ball\n    📖 ${fmt(r.done)}${r.target ? `/${fmt(r.target)}` : ""} (${r.planPct}%) · 📅 ${r.days}/${r.wd} kun · 🔁 ${fmt(r.rev)}/${fmt(r.revTarget)}`).join("\n");
+}
+async function scoreText(circId: number) {
+  const m = day().slice(0, 7), rows = await monthScore(circId, m);
+  const head = `🏅 <b>${MONTHS[Number(m.slice(5)) - 1]} — ball reytingi</b>\n<i>Reja ${W_PLAN} + muntazamlik ${W_CONS} + takror ${W_REV} = 100</i>` + (PRIZE ? `\n🎁 Sovrin: <b>${esc(PRIZE)}</b>` : "");
+  return head + "\n\n" + (rows.length ? scoreLines(rows) : "A'zolar yo'q.");
+}
+// har oyning boshida o'tgan oy natijasi bir marta yuboriladi (takror yozilgan bo'lsa)
+async function awardMonths() {
+  if (Number(day().slice(8)) > 5) return;
+  const dt = new Date(day().slice(0, 8) + "01T00:00:00Z"); dt.setUTCDate(0);
+  const pm = dt.toISOString().slice(0, 7);
+  const { data: cs } = await sb.from("circles").select("*");
+  for (const c of cs ?? []) {
+    const { data: ex } = await sb.from("month_awards").select("month").eq("circle_id", c.id).eq("month", pm).maybeSingle();
+    if (ex) continue;
+    const { count } = await sb.from("revisions").select("*", { count: "exact", head: true }).eq("circle_id", c.id).gte("day", pm + "-01").lte("day", monthEnd(pm + "-01"));
+    if (!count) continue;
+    const rows = await monthScore(c.id, pm);
+    if (!rows.length) continue;
+    const { error } = await sb.from("month_awards").insert({ circle_id: c.id, month: pm, result: rows });
+    if (error) continue;
+    const prize = String(c.prize ?? "");
+    const msg = `🏆 <b>${MONTHS[Number(pm.slice(5)) - 1]} oyi natijalari</b>\n\n${scoreLines(rows)}\n\n` +
+      (prize ? `🎁 Sovrin: <b>${esc(prize)}</b>\n🎉 Tabriklaymiz, <b>${esc(rows[0].name)}</b>!` : `🎉 G'olib: <b>${esc(rows[0].name)}</b>!`);
+    const { data: ms } = await sb.from("members").select("tg_id").eq("circle_id", c.id);
+    const to = new Set<number>([c.admin_id, ...(ms ?? []).map((m) => m.tg_id)]);
+    for (const id of to) await send(id, msg).catch(() => {});
+  }
+}
+async function revLine(uid: number) {
+  const t = await revToday(uid);
+  return `\n🔁 Takror bugun: ${fmt(t)} / ${fmt(REV_DAILY)} sahifa`;
+}
+
 // ---------- eslatmalar ----------
 async function remind() {
+  await awardMonths();
   if (dow() === REST) return; // dam kuni
   const { data: cs } = await sb.from("circles").select("*");
   for (const c of cs ?? []) {
@@ -2152,7 +2284,7 @@ async function rpc(req: Request) {
   switch (body.a) {
     case "me": {
       const out: Record<string, unknown> = {
-        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(), rest_day: REST, rest_name: FULLDAY[REST],
+        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(), rest_day: REST, rest_name: FULLDAY[REST], rev_daily: REV_DAILY, prize: PRIZE,
       };
       if (mem) {
         const s = (await statsFor([uid], ws)).get(uid)!;
@@ -2161,7 +2293,7 @@ async function rpc(req: Request) {
           goal: s.goal, approved: s.approved, pending: s.pending,
           expected: s.goal ? expected(s.goal) : 0,
           allTime: (all ?? []).reduce((x, r) => x + Number(r.pages), 0),
-          lt: await longTerm(uid), rec: await weekRecord(uid),
+          lt: await longTerm(uid), rec: await weekRecord(uid), revToday: await revToday(uid),
           time: { week: (await timeStats([uid], ws)).get(uid), month: (await timeStats([uid], monthStart())).get(uid) },
         };
       }
@@ -2332,6 +2464,33 @@ async function rpc(req: Request) {
       }
       await liveFinish(uid, name, range, null, true);
       return ok();
+    }
+    case "score": {
+      const m = day().slice(0, 7);
+      return json({ month: MONTHS[Number(m.slice(5)) - 1], prize: PRIZE, weights: { plan: W_PLAN, cons: W_CONS, rev: W_REV }, rev_daily: REV_DAILY, rows: await monthScore(circId, m) });
+    }
+    case "rev_add": {
+      if (!mem) return forbid();
+      const tot = await addRevision(uid, Number(body.pages), true);
+      return tot === null ? bad() : json({ ok: true, today: tot, norm: REV_DAILY });
+    }
+    case "rev_list": {
+      if (!admin) return forbid();
+      const id = Number(body.id);
+      if (!(await memberInCircle(uid, id))) return forbid();
+      const { data } = await sb.from("revisions").select("id,pages,day").eq("tg_id", id).order("created_at", { ascending: false }).limit(30);
+      return json({ items: (data ?? []).map((r) => ({ id: r.id, pages: Number(r.pages), day: r.day })) });
+    }
+    case "rev_delete": {
+      if (!admin) return forbid();
+      await sb.from("revisions").delete().eq("id", Number(body.id)).eq("circle_id", circId);
+      return ok();
+    }
+    case "settings_set": {
+      if (!admin) return forbid();
+      if (body.rev_daily !== undefined && !(await setRevDaily(uid, Math.round(Number(body.rev_daily) * 100) / 100))) return json({ error: "bad_rev" }, 400);
+      if (body.prize !== undefined && !(await setPrize(uid, String(body.prize)))) return bad();
+      return json({ ok: true, rev_daily: REV_DAILY, prize: PRIZE });
     }
     case "rest_set": {
       if (!admin) return forbid();

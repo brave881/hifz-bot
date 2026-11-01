@@ -104,7 +104,7 @@ async function membersView() {
     sumGoal ? bar(sumApp, 0, sumGoal) : null,
     h("div", { class: "actions", style: "margin:10px 0 0" },
       h("button", { class: "btn primary", onclick: addMemberSheet }, "➕ A'zo qo'shish"),
-      h("button", { class: "btn", onclick: restSheet }, "🛌 Dam kuni: " + (S.me.rest_name || "yakshanba")),
+      h("button", { class: "btn", onclick: settingsSheet }, "⚙️ Sozlamalar"),
       h("button", { class: "btn", onclick: () => copyOrShow("📈 Hafta hisoboti (" + d.week_start + ")\n\n" + lines.join("\n") + "\n\nJami tasdiqlangan: " + fmt(sumApp) + " sahifa") }, "📋 Hisobot"))));
   root.append(h("div", { class: "seg wrap" }, FILTERS.map(([k, l]) =>
     h("button", { class: k === (S.filter || "all") ? "on" : "", onclick: () => { S.filter = k; render(); } }, l))));

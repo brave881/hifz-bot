@@ -28,3 +28,9 @@ Quron yodlash guruhi uchun Telegram bot + sayt.
 - **Dam kuni** admin tomonidan belgilanadi (bot: `/dam` yoki Panel xabaridagi tugma; sayt: A'zolar → 🛌 Dam kuni). Oylik reja, haftalik «kutilgan» hisob va eslatmalar shunga moslanadi. Migratsiya: `007_v14.sql`.
 - **Jonli taymer** (sayt «Hozir» bo'limi): ⏱ soat:daqiqa:soniya. Botda tugatganda davomiylik yoziladi.
 - **Vaqt statistikasi**: bugun / hafta / oy daqiqalari, seanslar soni, bir betga o'rtacha vaqt (a'zoda «Natijam», adminda a'zo kartasida). 1 daqiqadan kam yoki 4 soatdan uzun seanslar (tugatish unutilgan) hisobga olinmaydi.
+
+## v15 — takror, ball tizimi, oylik g'olib
+- **🔁 Takror** (sabqi/manzil): a'zo «Takror qildim» deb sahifa yozadi (bot: 🔁 Takror, sayt: Natijam). Admin tasdiqlamaydi, lekin a'zo kartasi → Hisobotlar ichida ko'rib o'chira oladi. Norma: kuniga `circles.rev_daily` sahifa (default 5).
+- **Ball (oylik, 100)**: reja foizi 50 (tasdiqlangan sahifa / shu paytgacha bo'lishi kerak bo'lgan, oylik reja yoki haftalik maqsadlar yig'indisi) + muntazamlik 30 (hisobot berilgan kunlar / o'tgan ish kunlari) + takror 20 (takror / norma). Reyting → 🏅 Ball (bot va sayt).
+- **Sozlamalar** (admin): dam kuni, takror normasi, oylik sovrin. Bot: `/dam`, `/takror 6`, `/sovga Umra safari`.
+- **Oylik g'olib**: har oy 1–5-kunlari o'tgan oy natijasi bir marta hammaga yuboriladi (`month_awards`). Faqat o'sha oyda takror yozilgan bo'lsa yuboriladi. Migratsiya: `008_v15.sql`.
