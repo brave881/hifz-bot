@@ -440,15 +440,41 @@ function settingsSheet() {
   openSheet("⚙️ Sozlamalar", close => {
     const rv = h("input", { type: "number", inputmode: "decimal", step: "0.5", min: "0.5", max: "50", value: String(S.me.rev_daily || 5) });
     const pz = h("input", { type: "text", maxlength: "200", placeholder: "Masalan: Umra safari", value: S.me.prize || "" });
+    const mh = h("input", { type: "number", inputmode: "numeric", min: "0", max: "23", value: String(S.me.morning_hour == null ? 8 : S.me.morning_hour) });
     return h("div", {},
       h("div", { class: "sec" }, "🛌 Dam kuni: " + (S.me.rest_name || "")),
       h("button", { class: "btn wide", onclick: () => { close(); restSheet(); } }, "Dam kunini o'zgartirish"),
       h("div", { class: "sec" }, "🔁 Kunlik takror normasi (sahifa)"), h("div", { class: "custom" }, rv),
+      h("div", { class: "sec" }, "🌅 Ertalabki xabar soati (Toshkent, 0–23)"), h("div", { class: "custom" }, mh),
+      h("div", { class: "meta" }, "Shu soatda har a'zoga bugungi vazifa va (har ikki kunda) fazilat eslatmasi boradi."),
+      h("button", { class: "btn wide", onclick: () => { close(); virtuesSheet(); } }, "📜 Fazilat eslatmalari"),
       h("div", { class: "sec" }, "🎁 Oylik sovrin"), h("div", { class: "custom" }, pz),
       h("div", { class: "meta" }, "Oy g'olibi ball bo'yicha aniqlanadi: reja 50 + muntazamlik 30 + takror 20."),
       h("button", { class: "btn primary wide", onclick: async () => {
-        try { await rpc("settings_set", { rev_daily: Number(String(rv.value).replace(",", ".")), prize: pz.value }); close(); toast("✅ Saqlandi"); await reload(); }
-        catch (e) { toast(e.message === "bad_rev" ? "Takror normasi 0 dan katta, 50 gacha bo'lsin" : "Xato: " + e.message); }
+        try { await rpc("settings_set", { rev_daily: Number(String(rv.value).replace(",", ".")), prize: pz.value, morning_hour: Number(mh.value) }); close(); toast("✅ Saqlandi"); await reload(); }
+        catch (e) { toast(e.message === "bad_rev" ? "Takror normasi 0 dan katta, 50 gacha bo'lsin" : e.message === "bad_hour" ? "Soat 0 dan 23 gacha bo'lsin" : "Xato: " + e.message); }
       } }, "Saqlash"));
   });
+}
+
+async function virtuesSheet() {
+  try {
+    const d = await rpc("virtue_list");
+    openSheet("📜 Fazilat eslatmalari", close => {
+      const kind = h("select", {}, Object.entries(d.kinds).map(([k, v]) => h("option", { value: k }, v)));
+      const body = h("input", { type: "text", maxlength: "600", placeholder: "Matn" });
+      const src = h("input", { type: "text", maxlength: "120", placeholder: "Manba (masalan: Buxoriy, 5027)" });
+      const w = h("div", {}, h("div", { class: "meta" }, "Har ikki kunda bittasi yuboriladi. Boshlang'ich to'plamni ishonchli ustoz bilan tekshirib chiqing. Ulamo so'zlarini o'zingiz qo'shing."),
+        h("div", { class: "sec" }, "➕ Yangi"), h("div", { class: "custom" }, kind), h("div", { class: "custom", style: "margin-top:8px" }, body), h("div", { class: "custom", style: "margin-top:8px" }, src),
+        h("button", { class: "btn primary wide", onclick: async () => {
+          if (!body.value.trim()) return toast("Matnni yozing");
+          try { await rpc("virtue_add", { kind: kind.value, body: body.value, source: src.value }); close(); toast("✅ Qo'shildi"); virtuesSheet(); } catch (e) { toast("Xato: " + e.message); }
+        } }, "Qo'shish"),
+        h("div", { class: "sec" }, "Ro'yxat (" + d.items.length + ")"));
+      d.items.forEach(v => w.append(h("div", { class: "card" }, h("div", { class: "meta" }, d.kinds[v.kind] || v.kind),
+        h("div", {}, v.body), v.source ? h("div", { class: "meta" }, "— " + v.source) : null,
+        h("button", { class: "btn wide", onclick: async () => { try { await rpc("virtue_delete", { id: v.id }); close(); virtuesSheet(); } catch (e) { toast("Xato: " + e.message); } } }, "🗑 O'chirish"))));
+      return w;
+    });
+  } catch (e) { toast("Xato: " + e.message); }
 }

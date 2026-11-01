@@ -33,7 +33,7 @@ const day = (s = 0) => nowShift(s).toISOString().slice(0, 10);
 const dow = () => nowShift().getUTCDay(); // 0 = yakshanba
 const weekStart = () => day(-((dow() + 6) % 7)); // dushanba
 // dam kuni (0=yakshanba..6=shanba): admin belgilaydi (circles.rest_day), hafta dushanbadan boshlanadi
-let REST = 0, restAt = 0, REV_DAILY = 5, PRIZE = "";
+let REST = 0, restAt = 0, REV_DAILY = 5, PRIZE = "", MORNING = 8;
 const ORDER = [1, 2, 3, 4, 5, 6, 0];
 const WORKDOW = () => ORDER.filter((x) => x !== REST);
 const elapsed = () => ORDER.slice(0, ORDER.indexOf(dow()) + 1).filter((x) => x !== REST).length; // o'tgan ish kunlari (bugun bilan)
@@ -47,6 +47,7 @@ async function loadRest() {
   REST = Number(data?.rest_day ?? 0);
   REV_DAILY = data?.rev_daily != null ? Number(data.rev_daily) : 5;
   PRIZE = String(data?.prize ?? "");
+  MORNING = data?.morning_hour != null ? Number(data.morning_hour) : 8;
   restAt = Date.now();
 }
 async function setRest(adminUid: number, n: number) {
@@ -1988,6 +1989,23 @@ async function handleMessage(msg: any) {
     return act("start", uid, name);
   }
   if (t.startsWith("/dam")) return act("rdm", uid, name);
+  if (t.startsWith("/fazilat") || t.startsWith("/vaqt")) {
+    const c = await adminCircle(uid, name);
+    if (!c) return;
+    const arg = t.replace(/^\/\S+\s*/, "").trim();
+    if (t.startsWith("/vaqt")) {
+      if (!arg) return send(uid, `🌅 Ertalabki xabar: soat <b>${MORNING}:00</b> (Toshkent).\nO'zgartirish: <code>/vaqt 7</code>`);
+      return send(uid, (await setMorning(uid, Number(arg))) ? `✅ Ertalabki xabar: soat <b>${MORNING}:00</b>.` : "Soat 0 dan 23 gacha bo'lsin.");
+    }
+    const parts = arg.split("|").map((x) => x.trim());
+    if (parts.length < 2) {
+      const { data: vs } = await sb.from("virtues").select("id").eq("active", true).or(`circle_id.is.null,circle_id.eq.${c.id}`);
+      return send(uid, `📜 Fazilat eslatmalari: <b>${vs?.length ?? 0}</b> ta, har ikki kunda bittasi yuboriladi.\n\nQo'shish:\n<code>/fazilat hadis | Matn | Manba</code>\n(turi: oyat, hadis yoki ulamo)\n\nRo'yxat va o'chirish — saytda: ⚙️ Sozlamalar.`);
+    }
+    const kind = /^oyat/i.test(parts[0]) ? "ayah" : /^ulamo|^sholar|^scholar/i.test(parts[0]) ? "scholar" : "hadith";
+    const { error } = await sb.from("virtues").insert({ circle_id: c.id, kind, body: parts[1].slice(0, 600), source: (parts[2] ?? "").slice(0, 120) || null });
+    return send(uid, error ? "Xato." : `✅ Qo'shildi:\n\n${virtueText({ kind, body: parts[1].slice(0, 600), source: parts[2] ?? null })}`);
+  }
   if (t.startsWith("/takror") || t.startsWith("/sovga")) {
     const c = await adminCircle(uid, name);
     if (!c) return;
@@ -2133,6 +2151,55 @@ async function revLine(uid: number) {
   return `\n🔁 Takror bugun: ${fmt(t)} / ${fmt(REV_DAILY)} sahifa`;
 }
 
+
+// ---------- v16: fazilat eslatmalari + ertalabki vazifa ----------
+const VKIND: Record<string, string> = { ayah: "📖 Oyat", hadith: "📜 Hadis", scholar: "🎓 Ulamo so'zi" };
+async function setMorning(adminUid: number, h: number) {
+  if (!Number.isInteger(h) || h < 0 || h > 23) return false;
+  const { error } = await sb.from("circles").update({ morning_hour: h }).eq("admin_id", adminUid);
+  if (error) return false;
+  MORNING = h; restAt = Date.now();
+  return true;
+}
+// har ikki kunda bitta fazilat; hamma a'zo bir xil narsani oladi, ro'yxat aylanadi
+async function pickVirtue(circId: number) {
+  const n = Math.floor(Date.parse(day() + "T00:00:00Z") / 864e5);
+  if (n % 2 !== 0) return null;
+  const { data } = await sb.from("virtues").select("*").eq("active", true).or(`circle_id.is.null,circle_id.eq.${circId}`).order("id");
+  if (!data?.length) return null;
+  return data[(n / 2) % data.length];
+}
+const virtueText = (v: { kind: string; body: string; source: string | null }) =>
+  `${VKIND[v.kind] ?? "📜"}\n\n<i>${esc(v.body)}</i>` + (v.source ? `\n— ${esc(v.source)}` : "");
+async function morning(c: { id: number; admin_id: number }) {
+  const { data: ms } = await sb.from("members").select("tg_id,name").eq("circle_id", c.id);
+  const v = await pickVirtue(c.id);
+  const rest = dow() === REST;
+  for (const m of ms ?? []) {
+    const L: string[] = [];
+    if (!rest) {
+      const info = await planInfo(m.tg_id);
+      if (info.today && !info.todayDone) {
+        L.push(`🌅 <b>Bugungi vazifa</b>\n📍 ${info.today.from} → ${info.today.to}\n≈ ${fmt(info.today.pages)} sahifa`);
+        L.push("Boshlashdan oldin niyat qiling va «▶️ Yodlashni boshlash»ni bosing 🌙");
+      }
+    }
+    if (v) L.push(virtueText(v));
+    if (L.length) await send(m.tg_id, L.join("\n\n"), menuKb(false, true)).catch(() => {});
+  }
+}
+// har soatda ishlaydi: belgilangan soatda (Toshkent) kuniga bir marta ertalabki xabar
+async function tick() {
+  const hr = nowShift().getUTCHours();
+  const { data: cs } = await sb.from("circles").select("*");
+  for (const c of cs ?? []) {
+    const mh = c.morning_hour != null ? Number(c.morning_hour) : 8;
+    if (hr !== mh || c.last_morning === day()) continue;
+    const { error } = await sb.from("circles").update({ last_morning: day() }).eq("id", c.id);
+    if (!error) await morning(c);
+  }
+}
+
 // ---------- eslatmalar ----------
 async function remind() {
   await awardMonths();
@@ -2194,10 +2261,14 @@ function cronSql(hook: string, k: string) {
   return `create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
-select cron.unschedule(jobname) from cron.job where jobname in ('hifz-remind','hifz-weekly');
+select cron.unschedule(jobname) from cron.job where jobname in ('hifz-remind','hifz-weekly','hifz-tick');
 
 select cron.schedule('hifz-remind', '0 16 * * *', $$
   select net.http_post(url := '${hook}/cron?a=remind&k=${k}');
+$$);
+
+select cron.schedule('hifz-tick', '2 * * * *', $$
+  select net.http_post(url := '${hook}/cron?a=tick&k=${k}');
 $$);
 
 select cron.schedule('hifz-weekly', '5 16 * * 6', $$
@@ -2284,7 +2355,7 @@ async function rpc(req: Request) {
   switch (body.a) {
     case "me": {
       const out: Record<string, unknown> = {
-        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(), rest_day: REST, rest_name: FULLDAY[REST], rev_daily: REV_DAILY, prize: PRIZE,
+        uid, name, isAdmin: admin, isMember: !!mem, week_start: ws, today: day(), rest_day: REST, rest_name: FULLDAY[REST], rev_daily: REV_DAILY, prize: PRIZE, morning_hour: MORNING,
       };
       if (mem) {
         const s = (await statsFor([uid], ws)).get(uid)!;
@@ -2486,8 +2557,27 @@ async function rpc(req: Request) {
       await sb.from("revisions").delete().eq("id", Number(body.id)).eq("circle_id", circId);
       return ok();
     }
+    case "virtue_list": {
+      if (!admin) return forbid();
+      const { data } = await sb.from("virtues").select("id,kind,body,source,circle_id").or(`circle_id.is.null,circle_id.eq.${circId}`).eq("active", true).order("id");
+      return json({ items: data ?? [], kinds: VKIND });
+    }
+    case "virtue_add": {
+      if (!admin) return forbid();
+      const kind = ["ayah", "hadith", "scholar"].includes(String(body.kind)) ? String(body.kind) : "hadith";
+      const t = String(body.body ?? "").trim().slice(0, 600);
+      if (!t) return bad();
+      await sb.from("virtues").insert({ circle_id: circId, kind, body: t, source: String(body.source ?? "").trim().slice(0, 120) || null });
+      return ok();
+    }
+    case "virtue_delete": {
+      if (!admin) return forbid();
+      await sb.from("virtues").update({ active: false }).eq("id", Number(body.id)).or(`circle_id.is.null,circle_id.eq.${circId}`);
+      return ok();
+    }
     case "settings_set": {
       if (!admin) return forbid();
+      if (body.morning_hour !== undefined && !(await setMorning(uid, Number(body.morning_hour)))) return json({ error: "bad_hour" }, 400);
       if (body.rev_daily !== undefined && !(await setRevDaily(uid, Math.round(Number(body.rev_daily) * 100) / 100))) return json({ error: "bad_rev" }, 400);
       if (body.prize !== undefined && !(await setPrize(uid, String(body.prize)))) return bad();
       return json({ ok: true, rev_daily: REV_DAILY, prize: PRIZE });
@@ -2638,6 +2728,7 @@ Deno.serve(async (req) => {
       const a = url.searchParams.get("a");
       if (a === "remind") await remind();
       if (a === "weekly") await weekly();
+      if (a === "tick") await tick();
       return text("ok");
     }
     if (req.method === "POST") {

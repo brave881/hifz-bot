@@ -34,3 +34,8 @@ Quron yodlash guruhi uchun Telegram bot + sayt.
 - **Ball (oylik, 100)**: reja foizi 50 (tasdiqlangan sahifa / shu paytgacha bo'lishi kerak bo'lgan, oylik reja yoki haftalik maqsadlar yig'indisi) + muntazamlik 30 (hisobot berilgan kunlar / o'tgan ish kunlari) + takror 20 (takror / norma). Reyting → 🏅 Ball (bot va sayt).
 - **Sozlamalar** (admin): dam kuni, takror normasi, oylik sovrin. Bot: `/dam`, `/takror 6`, `/sovga Umra safari`.
 - **Oylik g'olib**: har oy 1–5-kunlari o'tgan oy natijasi bir marta hammaga yuboriladi (`month_awards`). Faqat o'sha oyda takror yozilgan bo'lsa yuboriladi. Migratsiya: `008_v15.sql`.
+
+## v16 — fazilat eslatmalari va ertalabki vazifa
+- **Ertalabki xabar** (admin belgilagan soatda, default 8:00 Toshkent): har a'zoga bugungi vazifa («qayerdan qayergacha») va har ikki kunda bitta fazilat (oyat/hadis/ulamo so'zi). Dam kunida faqat fazilat boradi. Bot: `/vaqt 7`; sayt: ⚙️ Sozlamalar.
+- **Fazilatlar to'plami**: 11 ta boshlang'ich oyat/hadis (migratsiya `009_v16.sql`) — tarjimalarni ustoz bilan tekshiring. Admin qo'shadi/o'chiradi: sayt → ⚙️ Sozlamalar → 📜 Fazilat eslatmalari, yoki bot: `/fazilat hadis | Matn | Manba`.
+- **Cron**: yangi soatlik ish `hifz-tick`. `/setup?token=BOT_TOKEN` ni qayta ochib, chiqqan SQL'ni Supabase SQL Editor'da Run qiling.
