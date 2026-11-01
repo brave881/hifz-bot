@@ -449,6 +449,7 @@ function settingsSheet() {
       h("div", { class: "meta" }, "Shu soatda har a'zoga bugungi vazifa va (har ikki kunda) fazilat eslatmasi boradi."),
       h("button", { class: "btn wide", onclick: () => { close(); virtuesSheet(); } }, "📜 Fazilat eslatmalari"),
       h("div", { class: "sec" }, "🎁 Oylik sovrin"), h("div", { class: "custom" }, pz),
+      h("button", { class: "btn wide", onclick: () => { close(); resetSheet(); } }, "🧨 Hammasini tozalash"),
       h("div", { class: "meta" }, "Oy g'olibi ball bo'yicha aniqlanadi: reja 50 + muntazamlik 30 + takror 20."),
       h("button", { class: "btn primary wide", onclick: async () => {
         try { await rpc("settings_set", { rev_daily: Number(String(rv.value).replace(",", ".")), prize: pz.value, morning_hour: Number(mh.value) }); close(); toast("✅ Saqlandi"); await reload(); }
@@ -477,4 +478,19 @@ async function virtuesSheet() {
       return w;
     });
   } catch (e) { toast("Xato: " + e.message); }
+}
+
+function resetSheet() {
+  openSheet("🧨 Hammasini tozalash", close => {
+    const cf = h("input", { type: "text", placeholder: "TOZALASH deb yozing", autocapitalize: "characters" });
+    const emp = h("input", { type: "checkbox" });
+    return h("div", {}, h("div", { class: "meta" }, "Barcha a'zolar va ularning hisobot, reja, xatolari Savatga o'tadi (tiklash mumkin). Tarix va oylik natijalar butunlay o'chadi. Siz o'zingiz a'zo bo'lsangiz, siz ham chiqarilasiz."),
+      h("div", { class: "custom" }, cf),
+      h("label", { class: "meta", style: "display:block;margin:8px 0" }, emp, " Savatni ham butunlay bo'shatish (qaytarib bo'lmaydi)"),
+      h("button", { class: "btn primary wide", onclick: async () => {
+        if (cf.value.trim().toUpperCase() !== "TOZALASH") return toast("Tasdiqlash uchun TOZALASH deb yozing");
+        try { const r = await rpc("reset_all", { confirm: "TOZALASH", empty_trash: emp.checked }); close(); toast("✅ Tozalandi: " + r.removed + " a'zo"); await reload(); }
+        catch (e) { toast("Xato: " + e.message); }
+      } }, "Tozalash"));
+  });
 }

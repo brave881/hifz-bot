@@ -621,6 +621,14 @@ async function act(a: string, uid: number, name: string, mid?: number) {
 
   if (a === "new") return showMenu(uid, name);
 
+  if (a === "rzm" && circ) return send(uid, "🧨 <b>Hammasini tozalash</b>\n\nBarcha a'zolar va ularning hisobot, reja, xatolari <b>Savatga</b> o'tadi (tiklash mumkin). Tarix va oylik natijalar butunlay o'chadi.\n\nDavom etasizmi?", { inline_keyboard: [
+    [{ text: "🧨 Ha, tozala (Savatga)", callback_data: "rz1" }],
+    [{ text: "🧨 Tozala + Savatni ham bo'shat", callback_data: "rz2" }],
+    [{ text: "⬅️ Bekor", callback_data: "m" }]] });
+  if ((a === "rz1" || a === "rz2") && circ) {
+    const n = await resetAll(uid, a === "rz2");
+    return send(uid, `✅ Tozalandi: ${n ?? 0} a'zo ${a === "rz2" ? "butunlay o'chirildi" : "Savatga o'tdi"}.`, menuKb(true, !!mem));
+  }
   if (a === "rdm" && circ) return send(uid, `🛌 Dam kuni: <b>${FULLDAY[REST]}</b>\nQaysi kun dam bo'lsin?`, restKb());
   if (a.startsWith("rd:") && circ) {
     const ok = await setRest(uid, Number(a.slice(3)));
@@ -1554,7 +1562,7 @@ async function voicePlus(uid: number, name: string, fileId: string): Promise<boo
 }
 
 // ---------- v12: a'zoni admin qo'shadi, savat, a'zo -> yo'naltiruvchi xabari ----------
-const MEMBER_TABLES = ["goals", "reports", "plans", "month_goals", "month_plans", "positions", "study_sessions", "mistakes"];
+const MEMBER_TABLES = ["goals", "reports", "plans", "month_goals", "month_plans", "positions", "study_sessions", "mistakes", "revisions"];
 
 async function addMember(adminUid: number, id: number, name: string, phone: string | null) {
   const circ = await circleOfAdmin(adminUid);
@@ -1576,7 +1584,7 @@ async function trashPut(circId: number, kind: string, label: string, data: unkno
 
 async function deleteMember(adminUid: number, memberId: number) {
   const circ = await circleOfAdmin(adminUid);
-  if (!circ || memberId === adminUid) return false;
+  if (!circ) return false; // admin o'zini a'zolikdan ham chiqara oladi (halqa o'chmaydi)
   const { data: m } = await sb.from("members").select("*").eq("tg_id", memberId).eq("circle_id", circ.id).maybeSingle();
   if (!m) return false;
   const tables: Record<string, unknown[]> = {};
@@ -1588,6 +1596,26 @@ async function deleteMember(adminUid: number, memberId: number) {
   for (const t of MEMBER_TABLES) await sb.from(t).delete().eq("tg_id", memberId);
   await sb.from("sessions").delete().eq("tg_id", memberId);
   await sb.from("members").delete().eq("tg_id", memberId);
+  return true;
+}
+
+// hammasini tozalash: barcha a'zolar Savatga o'tadi (tiklasa bo'ladi); tarix va oylik natijalar o'chadi
+async function resetAll(adminUid: number, emptyTrash: boolean) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return null;
+  const { data: ms } = await sb.from("members").select("tg_id").eq("circle_id", circ.id);
+  let n = 0;
+  for (const m of ms ?? []) if (await deleteMember(adminUid, m.tg_id)) n++;
+  await sb.from("audit").delete().eq("circle_id", circ.id);
+  await sb.from("month_awards").delete().eq("circle_id", circ.id);
+  await sb.from("sessions").delete().neq("tg_id", 0);
+  if (emptyTrash) await sb.from("trash").delete().eq("circle_id", circ.id);
+  return n;
+}
+async function emptyTrashOf(adminUid: number) {
+  const circ = await circleOfAdmin(adminUid);
+  if (!circ) return false;
+  await sb.from("trash").delete().eq("circle_id", circ.id);
   return true;
 }
 
@@ -1989,6 +2017,7 @@ async function handleMessage(msg: any) {
     return act("start", uid, name);
   }
   if (t.startsWith("/dam")) return act("rdm", uid, name);
+  if (t.startsWith("/tozala")) return act("rzm", uid, name);
   if (t.startsWith("/fazilat") || t.startsWith("/vaqt")) {
     const c = await adminCircle(uid, name);
     if (!c) return;
@@ -2581,6 +2610,12 @@ async function rpc(req: Request) {
       if (body.rev_daily !== undefined && !(await setRevDaily(uid, Math.round(Number(body.rev_daily) * 100) / 100))) return json({ error: "bad_rev" }, 400);
       if (body.prize !== undefined && !(await setPrize(uid, String(body.prize)))) return bad();
       return json({ ok: true, rev_daily: REV_DAILY, prize: PRIZE });
+    }
+    case "reset_all": {
+      if (!admin) return forbid();
+      if (String(body.confirm) !== "TOZALASH") return bad();
+      const n = await resetAll(uid, !!body.empty_trash);
+      return json({ ok: true, removed: n ?? 0 });
     }
     case "rest_set": {
       if (!admin) return forbid();
